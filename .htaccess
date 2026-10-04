@@ -1,0 +1,5 @@
+PassengerAppRoot /home/u590837060/domains/seagreen-woodcock-382393.hostingersite.com/nodejs
+PassengerAppType node
+PassengerNodejs /opt/alt/alt-nodejs24/root/bin/node
+PassengerStartupFile app.js
+PassengerBaseURI /

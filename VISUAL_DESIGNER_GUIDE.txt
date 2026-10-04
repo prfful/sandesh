@@ -1,0 +1,189 @@
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         VISUAL REPORT DESIGNER                                  │
+│                         Letter Settings Page                                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║  [Basic Settings]  [Visual Designer] ← Click here for new designer           ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────┬───────────────────┐
+│                                                          │                   │
+│  Design Canvas (Interactive)                            │  Properties Panel │
+│  ┌────────────────────────────────────────────────────┐ │                   │
+│  │                                                    │ │  Page Settings:   │
+│  │  [Zoom: ▬▬▬▬●▬▬ 100%]                            │ │  ┌──────────────┐ │
+│  │                                                    │ │  │ Font Family  │ │
+│  │  ┌──────────────────────────────────────────────┐ │ │  │ Font Size    │ │
+│  │  │  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓     │ │ │  │ Width        │ │
+│  │  │  ┃  LETTERHEAD IMAGE (Drag Me!)       ┃ ←─┐ │ │ │  │ Height       │ │
+│  │  │  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛   │ │ │ │  └──────────────┘ │
+│  │  │  ╔═══════════════════════════════════╗     │ │ │ │                   │
+│  │  │  ║  Content Area (Text stays here)  ║     │ │ │ │  Element Props:   │
+│  │  │  ║  - Margins define this area       ║     │ │ │ │  (when selected)  │
+│  │  │  ║  - Images can go anywhere         ║     │ │ │ │  ┌──────────────┐ │
+│  │  │  ║                                   ║     │ │ │ │  │ Upload Image │ │
+│  │  │  ║                                   ║     │ │ │ │  │ X Position   │ │
+│  │  │  ║                            ┏━━━━┓ ║     │ │ │ │  │ Y Position   │ │
+│  │  │  ║                            ┃ SIG┃ ║ ←─┼─┤ │ │  │ Width        │ │
+│  │  │  ║                            ┗━━━━┛ ║   │ │ │ │  │ Height       │ │
+│  │  │  ╚═══════════════════════════════════╝   │ │ │ │  │ Z-Index      │ │
+│  │  └──────────────────────────────────────────┘ │ │ │  └──────────────┘ │
+│  │                                                │ │ │                   │
+│  └────────────────────────────────────────────────┘ │ │                   │
+│                                                      │ │                   │
+│  [↻ Reset] [💾 Save Design] [📥 Export PDF]        │ │                   │
+│                                                      │ │                   │
+└──────────────────────────────────────────────────────┴───────────────────────┘
+
+                            HOW TO USE
+
+1. DRAG IMAGES
+   └─ Click on letterhead or signature and drag to position
+   
+2. SELECT ELEMENT
+   └─ Click on any image to see its properties on the right
+   
+3. ADJUST PROPERTIES
+   └─ Use sliders or input fields for precise control
+   
+4. UPLOAD NEW IMAGES
+   └─ Select element → Upload button in properties panel
+   
+5. ZOOM FOR PRECISION
+   └─ Use zoom slider to get closer for fine positioning
+   
+6. SAVE YOUR WORK
+   └─ Click "Save Design" to store in database
+   
+7. EXPORT PDF
+   └─ Click "Export PDF" to generate downloadable file
+
+                         KEY CONCEPTS
+
+╔════════════════════════════════════════════════════════════════╗
+║  MARGINS (Blue Dashed Border)                                 ║
+║  • Defines where TEXT content should stay                     ║
+║  • Content like letter body, addresses, etc.                  ║
+╚════════════════════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════════════════════╗
+║  IMAGES (Red/Selected Borders)                                ║
+║  • Can be placed ANYWHERE on the page                         ║
+║  • Not restricted by margins                                  ║
+║  • Letterhead typically at top, signature at bottom           ║
+╚════════════════════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════════════════════╗
+║  COORDINATES                                                   ║
+║  • Origin (0,0) = Top-Left corner                             ║
+║  • X increases → Right                                        ║
+║  • Y increases ↓ Down                                         ║
+║  • All measurements in millimeters (mm)                       ║
+╚════════════════════════════════════════════════════════════════╝
+
+╔════════════════════════════════════════════════════════════════╗
+║  Z-INDEX (Layering)                                           ║
+║  • Higher number = appears on top                             ║
+║  • Use when images overlap                                    ║
+║  • Range: 1-10                                                ║
+╚════════════════════════════════════════════════════════════════╝
+
+                    TYPICAL WORKFLOW
+
+┌─────────────────────────────────────────────────────────────┐
+│  1. Go to Letter Settings → Visual Designer tab            │
+│                                                             │
+│  2. Upload letterhead image (top of page)                  │
+│     └─ Click letterhead → Upload in properties panel       │
+│                                                             │
+│  3. Position letterhead by dragging                        │
+│     └─ Usually full width at top                           │
+│                                                             │
+│  4. Upload signature image                                 │
+│     └─ Click signature → Upload in properties panel        │
+│                                                             │
+│  5. Position signature                                     │
+│     └─ Usually bottom-right corner                         │
+│                                                             │
+│  6. Fine-tune with sliders                                 │
+│     └─ Adjust X, Y, Width, Height for precision            │
+│                                                             │
+│  7. Set page settings                                      │
+│     └─ Font family, size, margins                          │
+│                                                             │
+│  8. Test export                                            │
+│     └─ Click "Export PDF" to see result                    │
+│                                                             │
+│  9. Save design                                            │
+│     └─ Click "Save Design" to persist                      │
+│                                                             │
+│ 10. Use in letter generation                               │
+│     └─ Design is now available for all letters             │
+└─────────────────────────────────────────────────────────────┘
+
+                    EXAMPLE POSITIONS
+
+A4 Page (210mm × 297mm)
+
+Letterhead:
+  X: 0mm (left edge)
+  Y: 0-10mm (top)
+  Width: 210mm (full width)
+  Height: 60-80mm
+
+Signature:
+  X: 130-150mm (right side)
+  Y: 220-250mm (bottom area)
+  Width: 40-60mm
+  Height: 30-50mm
+
+                    QUICK TIPS
+
+💡 Drag with confidence - elements can't go outside page
+💡 Use zoom slider when positioning near edges
+💡 Higher z-index brings element to front
+💡 Save frequently to avoid losing work
+💡 Export PDF to test before finalizing
+💡 Images maintain aspect ratio when resizing
+💡 Click outside to deselect all elements
+💡 Blue dashed area is for text content only
+
+                    COMMON ISSUES
+
+❓ Can't drag image?
+   → Click on it first to select
+
+❓ Image not showing?
+   → Check if upload was successful
+   → Look at browser console
+
+❓ PDF looks different?
+   → Browser preview vs actual PDF may differ slightly
+   → Export PDF for accurate result
+
+❓ Changes not saving?
+   → Click "Save Design" button
+   → Check server is running
+
+                    API ENDPOINTS
+
+POST /upload
+  Upload image files
+  Returns: { url: "/uploads/filename.png" }
+
+POST /generate-pdf  
+  Generate PDF from HTML
+  Body: { html: "..." }
+  Returns: PDF file (binary)
+
+                BROWSER REQUIREMENTS
+
+✓ Chrome 90+
+✓ Firefox 88+
+✓ Safari 14+
+✓ Edge 90+
+
+✗ Internet Explorer (not supported)

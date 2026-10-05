@@ -277,6 +277,36 @@ const filterPayloadToColumns = (payload, allowedColumns) => {
   }, {});
 };
 
+const getManagedUploadPath = (fileUrl) => {
+  if (typeof fileUrl !== 'string' || !fileUrl) return null;
+
+  let pathname;
+  try {
+    pathname = new URL(fileUrl, 'http://localhost').pathname;
+  } catch {
+    return null;
+  }
+
+  if (!pathname.startsWith('/uploads/')) return null;
+  const filename = path.basename(pathname);
+  if (!filename || filename === '.' || filename === '..') return null;
+
+  const directories = isSameUploadsDir ? [uploadsDir] : [uploadsDir, legacyUploadsDir];
+  const matchingDirectory = directories.find((directory) => fs.existsSync(path.join(directory, filename)));
+  return matchingDirectory ? path.join(matchingDirectory, filename) : null;
+};
+
+const removeManagedUpload = async (fileUrl) => {
+  const filePath = getManagedUploadPath(fileUrl);
+  if (!filePath) return;
+
+  try {
+    await fs.promises.unlink(filePath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+};
+
 // Add global middleware to check database connection
 app.use('/api', (req, res, next) => {
   if (!pool) {
@@ -662,23 +692,60 @@ app.put('/api/entities/:entity/:id', async (req, res) => {
       return res.status(400).json({ error: 'empty_or_invalid_payload', message: 'No valid columns found for update' });
     }
 
+    const invitationCardColumn = 'invitation_card_url';
+    const managesInvitationCard = table === 'pragram' && allowedColumns.includes(invitationCardColumn);
+    let previousProgram = null;
+    if (managesInvitationCard) {
+      const [programRows] = await pool.query(
+        'SELECT id, Sn, ?? FROM ?? WHERE id = ? OR Sn = ? LIMIT 1',
+        [invitationCardColumn, table, req.params.id, req.params.id]
+      );
+      previousProgram = programRows[0] || null;
+    }
+
     let [result] = await pool.query('UPDATE ?? SET ? WHERE id = ?', [table, updatePayload, req.params.id]);
     console.log('Update result:', result);
 
     // Fallback: allow update by Sn for Pragram if id update did not match
     if (result.affectedRows === 0 && table === 'pragram') {
-      [result] = await pool.query('UPDATE ?? SET ? WHERE Sn = ?', [table, payload, req.params.id]);
+      [result] = await pool.query('UPDATE ?? SET ? WHERE Sn = ?', [table, updatePayload, req.params.id]);
       console.log('Update result (Sn fallback):', result);
-      if (result.affectedRows > 0) {
-        const [snRows] = await pool.query('SELECT * FROM ?? WHERE Sn = ? LIMIT 1', [table, req.params.id]);
-        return res.json(snRows[0] || { Sn: req.params.id, ...payload });
+    }
+
+    if (result.affectedRows === 0 && !(managesInvitationCard && previousProgram)) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+
+    if (managesInvitationCard && previousProgram) {
+      const wasMarkedSent = updatePayload.sended === true || updatePayload.sended === 1 || updatePayload.sended === '1' || updatePayload.sended === 'true';
+      const oldCardUrl = previousProgram[invitationCardColumn];
+      const newCardUrl = updatePayload[invitationCardColumn];
+      const attachmentChanged = Object.prototype.hasOwnProperty.call(updatePayload, invitationCardColumn)
+        && String(newCardUrl || '') !== String(oldCardUrl || '');
+
+      if (wasMarkedSent || attachmentChanged) {
+        await removeManagedUpload(oldCardUrl);
+      }
+
+      if (wasMarkedSent) {
+        const identifierColumn = previousProgram.id ? 'id' : 'Sn';
+        const identifier = previousProgram.id || previousProgram.Sn;
+        await pool.query('UPDATE ?? SET ?? = NULL WHERE ?? = ?', [table, invitationCardColumn, identifierColumn, identifier]);
+        if (newCardUrl && String(newCardUrl) !== String(oldCardUrl || '')) {
+          await removeManagedUpload(newCardUrl);
+        }
       }
     }
 
-    if (result.affectedRows === 0) return res.status(404).json({ error: 'not_found' });
-    const [rows] = await pool.query('SELECT * FROM ?? WHERE id = ?', [table, req.params.id]);
-    return res.json(rows[0] || { id: req.params.id, ...payload });
+    const identifierColumn = previousProgram?.id ? 'id' : (table === 'pragram' && previousProgram?.Sn ? 'Sn' : 'id');
+    const identifier = previousProgram?.id || previousProgram?.Sn || req.params.id;
+    const [rows] = await pool.query(
+      'SELECT * FROM ?? WHERE ?? = ? LIMIT 1',
+      [table, identifierColumn, identifier]
+    );
+    return res.json(rows[0] || { id: req.params.id, ...updatePayload });
   } catch (err) {
+    console.error(`Update error for ${table}:`, err);
     return res.status(500).json({ error: err.message });
   }
 });

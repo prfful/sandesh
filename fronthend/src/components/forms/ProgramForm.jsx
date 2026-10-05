@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import restClient from "@/api/restClient";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,9 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, Save, X, Trash2 } from "lucide-react";
+import { CalendarIcon, FileText, Save, X, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import ProgramTypeDisplay, { useProgramTypesMap } from "../ProgramDisplay";
 
 export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete, isLoading, nextSn }) {
@@ -143,8 +145,13 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
   });
 
   const [errors, setErrors] = useState({});
+  const [invitationCardFile, setInvitationCardFile] = useState(null);
+  const [removeInvitationCard, setRemoveInvitationCard] = useState(false);
+  const [uploadingCard, setUploadingCard] = useState(false);
 
   useEffect(() => {
+    setInvitationCardFile(null);
+    setRemoveInvitationCard(false);
     if (initialData) {
       setFormData(prev => ({
         ...prev,
@@ -186,12 +193,36 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (validateForm()) {
-      // programtyp is already a UUID string, no conversion needed
-      onSubmit(formData);
+    if (!validateForm()) return;
+
+    const submissionData = { ...formData };
+    if (removeInvitationCard) {
+      submissionData.invitation_card_url = null;
     }
+
+    if (invitationCardFile) {
+      setUploadingCard(true);
+      try {
+        const uploadData = new FormData();
+        uploadData.append("file", invitationCardFile);
+        const response = await restClient.uploadFile(uploadData);
+        const fileUrl = response?.file_url || response?.url || response?.data?.file_url || response?.data?.url;
+        if (!response?.success || !fileUrl) {
+          throw new Error(response?.error || "कार्ड अपलोड नहीं हो सका");
+        }
+        submissionData.invitation_card_url = fileUrl;
+      } catch (error) {
+        toast.error(`कार्ड अपलोड करने में विफल: ${error.message || "अज्ञात त्रुटि"}`);
+        setUploadingCard(false);
+        return;
+      }
+    }
+
+    // programtyp is already a UUID string, no conversion needed
+    onSubmit(submissionData);
+    setUploadingCard(false);
   };
 
   const handleChange = (field, value) => {
@@ -464,6 +495,74 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
             />
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="invitation-card" className="text-sm font-semibold text-gray-700">
+              निमंत्रण कार्ड की फोटो या PDF
+            </Label>
+            <Input
+              id="invitation-card"
+              type="file"
+              accept=".jpg,.jpeg,.pdf,image/jpeg,application/pdf"
+              disabled={isLoading || uploadingCard}
+              onChange={(event) => {
+                const file = event.target.files?.[0] || null;
+                if (!file) return;
+                const validType = file.type === "image/jpeg" || file.type === "application/pdf";
+                const validExtension = /\.(jpe?g|pdf)$/i.test(file.name);
+                if (!validType || !validExtension) {
+                  toast.error("केवल JPEG फोटो या PDF अपलोड करें");
+                  event.target.value = "";
+                  return;
+                }
+                if (file.size > 10 * 1024 * 1024) {
+                  toast.error("फ़ाइल का आकार 10 MB से कम होना चाहिए");
+                  event.target.value = "";
+                  return;
+                }
+                setInvitationCardFile(file);
+                setRemoveInvitationCard(false);
+              }}
+            />
+            <p className="text-xs text-gray-500">JPEG या PDF, अधिकतम 10 MB। धन्यवाद पत्र भेजने के बाद यह फ़ाइल अपने-आप हट जाएगी।</p>
+            {invitationCardFile && (
+              <div className="flex items-center justify-between rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm">
+                <span className="truncate">{invitationCardFile.name}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setInvitationCardFile(null)}
+                >
+                  हटाएं
+                </Button>
+              </div>
+            )}
+            {!invitationCardFile && formData.invitation_card_url && !removeInvitationCard && (
+              <div className="flex items-center justify-between rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm">
+                <a
+                  href={formData.invitation_card_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-orange-700 hover:underline"
+                >
+                  <FileText className="h-4 w-4" />
+                  मौजूदा निमंत्रण कार्ड देखें
+                </a>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRemoveInvitationCard(true)}
+                >
+                  हटाएं
+                </Button>
+              </div>
+            )}
+            {removeInvitationCard && (
+              <p className="text-xs text-amber-700">सहेजने पर मौजूदा कार्ड हट जाएगा।</p>
+            )}
+          </div>
+
           {/* Row 7: Checkboxes */}
           <div className="grid md:grid-cols-3 gap-6 pt-4 border-t border-orange-100">
             <div className="flex items-center space-x-2">
@@ -531,7 +630,7 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
                 type="button"
                 variant="destructive"
                 onClick={onDelete}
-                disabled={isLoading}
+                disabled={isLoading || uploadingCard}
                 className="gap-2"
               >
                 <Trash2 className="w-4 h-4" />
@@ -543,7 +642,7 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
                 type="button"
                 variant="outline"
                 onClick={onCancel}
-                disabled={isLoading}
+                disabled={isLoading || uploadingCard}
                 className="gap-2"
               >
                 <X className="w-4 h-4" />
@@ -551,11 +650,11 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
               </Button>
               <Button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || uploadingCard}
                 className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 gap-2"
               >
                 <Save className="w-4 h-4" />
-                {isLoading ? "सहेजा जा रहा है..." : "सहेजें"}
+                {uploadingCard ? "कार्ड अपलोड हो रहा है..." : isLoading ? "सहेजा जा रहा है..." : "सहेजें"}
               </Button>
             </div>
           </div>

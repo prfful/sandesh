@@ -6,6 +6,7 @@
     "frontend:dev": "cd fronthend && npm run dev",
     "api": "node server.js",
     "setup:politicians": "node create-politician-tables.js",
+    "setup:invitation-card": "node add-invitation-card-column.js",
     "setup:template-type": "node add-template-type-column.js",
     "upgrade:images": "node upgrade-image-columns.js",
     "build": "node scripts/build-frontend.js"

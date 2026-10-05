@@ -6,6 +6,7 @@ Complete invitation management system for Hindu ceremonies (विवाह, ग
 
 - **Digital Invitation Management** - Create and manage invitations for various ceremonies
 - **Letter Generation** - Professional letter templates with Hindi language support
+- **Invitation Card Attachments** - Keep JPEG/PDF cards available until the thank-you letter is marked sent
 - **Visual Designer** - Drag-and-drop report designer for custom layouts
 - **WhatsApp Integration** - Direct and API-based WhatsApp message sending
 - **PDF Generation** - Puppeteer-based PDF export
@@ -67,6 +68,7 @@ CREATE DATABASE sandesh_data CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```bash
 node test-db.js  # Test connection
 # Run additional schema update scripts as needed
+npm run setup:invitation-card  # Add invitation-card attachment storage to pragram
 ```
 
 ### 4. Environment Configuration

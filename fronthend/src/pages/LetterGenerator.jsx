@@ -143,6 +143,9 @@ export default function LetterGenerator() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['programs'] });
     },
+    onError: (error) => {
+      toast.error(`पत्र स्थिति या कार्ड हटाने में विफल: ${error.message || 'अज्ञात त्रुटि'}`);
+    },
   });
 
   const eligiblePrograms = useMemo(() => {
@@ -1079,7 +1082,6 @@ export default function LetterGenerator() {
         console.log('Generated HTML includes letter body:', htmlContent.includes(letterData.body?.substring(0, 50)));
         await downloadImageHybrid(htmlContent, `letter-${program.Sn || 'single'}.jpg`);
         toast.success("छवि तैयार है", { id: toastId });
-        updateSendedMutation.mutate({ id: program.id, Sn: program.Sn });
       } catch (error) {
         console.error('Single image generation error:', error);
         toast.error(`छवि बनाने में त्रुटि: ${error.message || 'Unknown error'}`, { id: toastId });
@@ -1169,6 +1171,7 @@ export default function LetterGenerator() {
           console.log('PDF uploaded successfully:', file_url);
           console.log('Absolute PDF URL for WhatsApp:', absolutePdfUrl);
 
+          const defaultMessage = appSettings?.whatsapp_direct_message || 'नमस्कार,\nकृपया संलग्न पत्र देखें:';
           const whatsappMode = appSettings?.whatsapp_mode || 'direct';
           console.log('WhatsApp mode:', whatsappMode, 'PDF API enabled:', appSettings?.whatsapp_pdf_api_enabled);
 
@@ -1285,8 +1288,14 @@ export default function LetterGenerator() {
 
               if (whatsappDirect?.success && whatsappDirect?.waLink) {
                 window.open(whatsappDirect.waLink, '_blank');
-                toast.success("WhatsApp खुल गया!", { id: toastId });
-                updateSendedMutation.mutate({ id: program.id, Sn: program.Sn });
+                toast.success("WhatsApp खुल गया। संदेश भेजने के बाद पुष्टि करें।", {
+                  id: toastId,
+                  duration: 60000,
+                  action: {
+                    label: "भेज दिया",
+                    onClick: () => updateSendedMutation.mutate({ id: program.id, Sn: program.Sn }),
+                  },
+                });
               } else {
                 toast.error("WhatsApp लिंक बनाने में विफल", { id: toastId });
               }
@@ -1296,8 +1305,14 @@ export default function LetterGenerator() {
               const messageWithLink = `${defaultMessage}\n\n${file_url}`;
               const whatsappUrl = `https://wa.me/${program.Mob}?text=${encodeURIComponent(messageWithLink)}`;
               window.open(whatsappUrl, '_blank');
-              toast.success("WhatsApp खुल गया!", { id: toastId });
-              updateSendedMutation.mutate({ id: program.id, Sn: program.Sn });
+              toast.success("WhatsApp खुल गया। संदेश भेजने के बाद पुष्टि करें।", {
+                id: toastId,
+                duration: 60000,
+                action: {
+                  label: "भेज दिया",
+                  onClick: () => updateSendedMutation.mutate({ id: program.id, Sn: program.Sn }),
+                },
+              });
             }
           }
         } catch (error) {
@@ -1385,7 +1400,6 @@ export default function LetterGenerator() {
           }
         }
         
-        await updateSendedMutation.mutateAsync({ id: program.id, Sn: program.Sn });
       }
       
       // Build one HTML document with the combined letters
@@ -1617,6 +1631,36 @@ export default function LetterGenerator() {
                         )}
                         <p>मोबाइल: {program.Mob}</p>
                       </div>
+                      {program.invitation_card_url && (
+                        <div className="mt-3">
+                          {/\.jpe?g(?:[?#].*)?$/i.test(program.invitation_card_url) ? (
+                            <a
+                              href={program.invitation_card_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 p-2 hover:bg-orange-100"
+                            >
+                              <img
+                                src={program.invitation_card_url}
+                                alt={`निमंत्रण कार्ड #${program.Sn}`}
+                                className="h-16 w-16 rounded object-cover"
+                              />
+                              <span className="text-sm font-medium text-orange-800">निमंत्रण कार्ड देखें</span>
+                            </a>
+                          ) : (
+                            <a
+                              href={program.invitation_card_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-medium text-orange-800 hover:bg-orange-100"
+                            >
+                              <FileText className="h-4 w-4" />
+                              निमंत्रण PDF देखें
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex gap-2 flex-wrap">

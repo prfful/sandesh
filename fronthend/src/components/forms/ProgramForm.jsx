@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import restClient from "@/api/restClient";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, FileText, Save, X, Trash2 } from "lucide-react";
+import { CalendarIcon, FileText, Loader2, Save, X, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import ProgramTypeDisplay, { useProgramTypesMap } from "../ProgramDisplay";
+import { readInvitationText, suggestInvitationFields } from "@/utils/invitationOcr";
 
 export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete, isLoading, nextSn }) {
   const fetchProgramTypes = async () => {
@@ -148,10 +149,20 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
   const [invitationCardFile, setInvitationCardFile] = useState(null);
   const [removeInvitationCard, setRemoveInvitationCard] = useState(false);
   const [uploadingCard, setUploadingCard] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState('');
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [recognizedText, setRecognizedText] = useState('');
+  const ocrRequestId = useRef(0);
 
   useEffect(() => {
     setInvitationCardFile(null);
     setRemoveInvitationCard(false);
+    ocrRequestId.current += 1;
+    setIsOcrProcessing(false);
+    setOcrStatus('');
+    setOcrProgress(0);
+    setRecognizedText('');
     if (initialData) {
       setFormData(prev => ({
         ...prev,
@@ -195,6 +206,10 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isOcrProcessing) {
+      toast.info("OCR पूरा होने तक प्रतीक्षा करें, फिर विवरण जांचें");
+      return;
+    }
     if (!validateForm()) return;
 
     const submissionData = { ...formData };
@@ -504,9 +519,13 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
               type="file"
               accept=".jpg,.jpeg,.pdf,image/jpeg,application/pdf"
               disabled={isLoading || uploadingCard}
-              onChange={(event) => {
+              onChange={async (event) => {
                 const file = event.target.files?.[0] || null;
                 if (!file) return;
+                const requestId = ++ocrRequestId.current;
+                setIsOcrProcessing(false);
+                setOcrStatus('');
+                setOcrProgress(0);
                 const validType = file.type === "image/jpeg" || file.type === "application/pdf";
                 const validExtension = /\.(jpe?g|pdf)$/i.test(file.name);
                 if (!validType || !validExtension) {
@@ -521,9 +540,73 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
                 }
                 setInvitationCardFile(file);
                 setRemoveInvitationCard(false);
+                setRecognizedText('');
+                setOcrStatus('निमंत्रण से पाठ पढ़ा जा रहा है...');
+                setOcrProgress(0);
+                setIsOcrProcessing(true);
+                try {
+                  const result = await readInvitationText(file, ({ status, progress }) => {
+                    if (requestId !== ocrRequestId.current) return;
+                    setOcrStatus(status);
+                    setOcrProgress(progress);
+                  });
+                  if (requestId !== ocrRequestId.current) return;
+
+                  const suggestions = suggestInvitationFields(
+                    result.text,
+                    pts
+                  );
+                  const suggestedFields = Object.keys(suggestions);
+                  setRecognizedText(result.text.trim());
+                  setFormData((previous) => {
+                    const additions = Object.fromEntries(
+                      Object.entries(suggestions).filter(([field]) =>
+                        previous[field] == null || String(previous[field]).trim() === ''
+                      )
+                    );
+                    return { ...previous, ...additions };
+                  });
+                  setOcrStatus(
+                    suggestedFields.length
+                      ? `OCR ने ${suggestedFields.length} फ़ील्ड के सुझाव दिए। खाली फ़ील्ड भरे गए; सेव करने से पहले जांचें।`
+                      : 'पाठ पढ़ा गया, लेकिन फ़ील्ड के सुझाव नहीं मिले। कृपया विवरण स्वयं भरें।'
+                  );
+                  if (result.truncated) {
+                    setOcrStatus((message) => `${message} PDF के पहले ${result.pageLimit} पृष्ठ पढ़े गए।`);
+                  }
+                } catch (error) {
+                  if (requestId !== ocrRequestId.current) return;
+                  console.error('Invitation card OCR failed:', error);
+                  setOcrStatus('OCR नहीं हो सका। आप कार्ड रखकर विवरण स्वयं भर सकते हैं।');
+                  toast.error(`निमंत्रण पढ़ने में विफल: ${error.message || 'अज्ञात त्रुटि'}`);
+                } finally {
+                  if (requestId === ocrRequestId.current) setIsOcrProcessing(false);
+                }
               }}
             />
             <p className="text-xs text-gray-500">JPEG या PDF, अधिकतम 10 MB। धन्यवाद पत्र भेजने के बाद यह फ़ाइल अपने-आप हट जाएगी।</p>
+            {ocrStatus && (
+              <div className="space-y-2 rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900" aria-live="polite">
+                <div className="flex items-center gap-2">
+                  {isOcrProcessing && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  <span>{ocrStatus}</span>
+                </div>
+                {isOcrProcessing && (
+                  <progress className="h-2 w-full accent-blue-600" max="100" value={ocrProgress} />
+                )}
+                <p className="text-xs text-blue-800">
+                  OCR इसी ब्राउज़र में चलता है, कोई पेड OCR API नहीं है। पहली बार Hindi/English मॉडल डाउनलोड हो सकते हैं। सहेजने से पहले सुझाव जांचें।
+                </p>
+                {recognizedText && (
+                  <details className="text-xs">
+                    <summary className="cursor-pointer font-medium">पहचाना गया पूरा पाठ देखें</summary>
+                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-sans">{recognizedText}</pre>
+                  </details>
+                )}
+              </div>
+            )}
             {invitationCardFile && (
               <div className="flex items-center justify-between rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm">
                 <span className="truncate">{invitationCardFile.name}</span>
@@ -531,7 +614,14 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setInvitationCardFile(null)}
+                  onClick={() => {
+                    ocrRequestId.current += 1;
+                    setInvitationCardFile(null);
+                    setIsOcrProcessing(false);
+                    setOcrStatus('');
+                    setOcrProgress(0);
+                    setRecognizedText('');
+                  }}
                 >
                   हटाएं
                 </Button>
@@ -642,7 +732,7 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
                 type="button"
                 variant="outline"
                 onClick={onCancel}
-                disabled={isLoading || uploadingCard}
+                disabled={isLoading || uploadingCard || isOcrProcessing}
                 className="gap-2"
               >
                 <X className="w-4 h-4" />
@@ -650,11 +740,11 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
               </Button>
               <Button
                 type="submit"
-                disabled={isLoading || uploadingCard}
+                disabled={isLoading || uploadingCard || isOcrProcessing}
                 className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 gap-2"
               >
                 <Save className="w-4 h-4" />
-                {uploadingCard ? "कार्ड अपलोड हो रहा है..." : isLoading ? "सहेजा जा रहा है..." : "सहेजें"}
+                {isOcrProcessing ? "निमंत्रण पढ़ा जा रहा है..." : uploadingCard ? "कार्ड अपलोड हो रहा है..." : isLoading ? "सहेजा जा रहा है..." : "सहेजें"}
               </Button>
             </div>
           </div>

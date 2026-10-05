@@ -7,6 +7,7 @@ Complete invitation management system for Hindu ceremonies (विवाह, ग
 - **Digital Invitation Management** - Create and manage invitations for various ceremonies
 - **Letter Generation** - Professional letter templates with Hindi language support
 - **Invitation Card Attachments** - Keep JPEG/PDF cards available until the thank-you letter is marked sent
+- **Invitation OCR** - Suggest Hindi/English form values from JPEG/scanned PDF cards in the browser; no paid OCR API is used
 - **Visual Designer** - Drag-and-drop report designer for custom layouts
 - **WhatsApp Integration** - Direct and API-based WhatsApp message sending
 - **PDF Generation** - Puppeteer-based PDF export

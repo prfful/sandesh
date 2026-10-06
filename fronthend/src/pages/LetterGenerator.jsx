@@ -127,24 +127,17 @@ export default function LetterGenerator() {
 
   const updateSendedMutation = useMutation({
     mutationFn: async ({ id, Sn }) => {
-      // Try to update by ID first, if not available find by Sn and update
-      if (id && id !== 'null' && id !== 'undefined') {
-        return restClient.updateEntity('Pragram', id, { sended: true });
-      } else if (Sn) {
-        // Find the program by Sn and update it
-        const programs = await restClient.listEntities('Pragram');
-        const program = programs.find(p => p.Sn === Sn);
-        if (program && program.id) {
-          return restClient.updateEntity('Pragram', program.id, { sended: true });
-        }
+      const identifier = id && id !== 'null' && id !== 'undefined' ? id : Sn;
+      if (identifier === undefined || identifier === null || identifier === '') {
+        throw new Error('कार्यक्रम की पहचान उपलब्ध नहीं है');
       }
-      console.warn('Cannot update sended status: no valid ID or Sn');
+      return restClient.updateEntity('Pragram', identifier, { sended: true });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['programs'] });
     },
     onError: (error) => {
-      toast.error(`पत्र स्थिति या कार्ड हटाने में विफल: ${error.message || 'अज्ञात त्रुटि'}`);
+      toast.error(`पत्र को "पत्र लिखे जा चुके" में स्थानांतरित नहीं किया जा सका: ${error.message || 'अज्ञात त्रुटि'}`);
     },
   });
 
@@ -893,20 +886,24 @@ export default function LetterGenerator() {
 
       console.log('Canvas created:', canvas.width, 'x', canvas.height, '(aspect ratio:', (canvas.width/canvas.height).toFixed(2), ')');
 
-      // Convert canvas to JPEG blob
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          throw new Error('Failed to create image blob');
-        }
-        console.log('Blob created:', (blob.size / 1024).toFixed(2), 'KB');
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename.replace('.pdf', '.jpg');
-        link.click();
-        URL.revokeObjectURL(url);
-        toast.success('छवि सफलतापूर्वक डाउनलोड की गई!');
-      }, 'image/jpeg', 0.95);
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) {
+            resolve(result);
+          } else {
+            reject(new Error('छवि फ़ाइल तैयार नहीं हो सकी'));
+          }
+        }, 'image/jpeg', 0.95);
+      });
+      console.log('Blob created:', (blob.size / 1024).toFixed(2), 'KB');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename.replace('.pdf', '.jpg');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 
     } catch (err) {
       console.error('Image generation error:', err);
@@ -1081,10 +1078,17 @@ export default function LetterGenerator() {
         console.log('Generated HTML (first 1000 chars):', htmlContent.substring(0, 1000));
         console.log('Generated HTML includes letter body:', htmlContent.includes(letterData.body?.substring(0, 50)));
         await downloadImageHybrid(htmlContent, `letter-${program.Sn || 'single'}.jpg`);
-        toast.success("छवि तैयार है", { id: toastId });
       } catch (error) {
         console.error('Single image generation error:', error);
         toast.error(`छवि बनाने में त्रुटि: ${error.message || 'Unknown error'}`, { id: toastId });
+        return;
+      }
+
+      try {
+        await updateSendedMutation.mutateAsync({ id: program.id, Sn: program.Sn });
+        toast.success('छवि डाउनलोड हुई और पत्र "पत्र लिखे जा चुके" में जोड़ दिया गया।', { id: toastId });
+      } catch (error) {
+        console.error('Failed to update sent status after image download:', error);
       }
     } else if (action === 'whatsapp') {
         const toastId = toast.loading("छवि बना रहे हैं...");
@@ -1428,10 +1432,19 @@ export default function LetterGenerator() {
 
       try {
         await downloadImageHybrid(combinedDocument, `letters-${selectedPrograms.length}.jpg`);
-        toast.success(`${selectedPrograms.length} छवियाँ डाउनलोड करने के लिए तैयार हैं!`);
       } catch (error) {
         console.error('Bulk image generation error:', error);
         toast.error(`छवि बनाने में त्रुटि: ${error.message || 'Unknown error'}`);
+        return;
+      }
+
+      try {
+        await Promise.all(selectedProgramData.map(program =>
+          updateSendedMutation.mutateAsync({ id: program.id, Sn: program.Sn })
+        ));
+        toast.success(`${selectedPrograms.length} छवियाँ डाउनलोड हुईं और पत्र "पत्र लिखे जा चुके" में जोड़ दिए गए।`);
+      } catch (error) {
+        console.error('Failed to update sent status after bulk image download:', error);
       }
     } else if (action === 'whatsapp') {
       toast.loading(`${selectedPrograms.length} पत्र WhatsApp पर भेजे जा रहे हैं...`);

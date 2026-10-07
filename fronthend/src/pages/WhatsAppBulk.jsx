@@ -222,6 +222,19 @@ export default function WhatsAppBulk() {
 
         <Card className="border-orange-100 shadow-lg">
           <CardHeader className="bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100">
+            <CardTitle className="text-xl font-bold text-gray-900">संदेश</CardTitle>
+          </CardHeader>
+          <CardContent className="p-6 space-y-3">
+            <Input placeholder="संदेश लिखें (उदाहरण: {{Name}} जी, {{Designation}} - {{Mandal}})" value={message} onChange={(e) => setMessage(e.target.value)} />
+            <div className="flex gap-3">
+              <Button className="gap-2" disabled={sending} onClick={onSend}>📤 Send Message</Button>
+              <Button variant="outline" onClick={() => { setSelectedTypes([]); setMessage(""); }}>🔄 Refresh</Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-orange-100 shadow-lg">
+          <CardHeader className="bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100">
             <CardTitle className="text-xl font-bold text-gray-900">रिकॉर्ड ({filtered.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-6 overflow-auto">
@@ -254,18 +267,6 @@ export default function WhatsAppBulk() {
           </CardContent>
         </Card>
 
-        <Card className="border-orange-100 shadow-lg">
-          <CardHeader className="bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100">
-            <CardTitle className="text-xl font-bold text-gray-900">संदेश</CardTitle>
-          </CardHeader>
-          <CardContent className="p-6 space-y-3">
-            <Input placeholder="संदेश लिखें (उदाहरण: {{Name}} जी, {{Designation}} - {{Mandal}})" value={message} onChange={(e) => setMessage(e.target.value)} />
-            <div className="flex gap-3">
-              <Button className="gap-2" disabled={sending} onClick={onSend}>📤 Send Message</Button>
-              <Button variant="outline" onClick={() => { setSelectedTypes([]); setMessage(""); }}>🔄 Refresh</Button>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* ✅ NEW: Preview URLs popup - ALWAYS SHOWS before sending */}

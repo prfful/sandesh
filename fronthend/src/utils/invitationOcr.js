@@ -161,6 +161,28 @@ const extractLabeledValue = (text, labelPattern) => {
   return match?.[1]?.replace(/\s{2,}/g, ' ').trim() || '';
 };
 
+const extractInlineLabeledValue = (text, labelPattern) => {
+  const pattern = new RegExp(
+    `(?:^|[\\s,])(?:${labelPattern})(?=\\s|[:：=\\-]|$)(?:\\s*[:：=\\-]\\s*|\\s+)(.+?)\\s*$`,
+    'i'
+  );
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(pattern);
+    if (match) return match[1].replace(/\s{2,}/g, ' ').trim();
+  }
+  return '';
+};
+
+const normalizeForMatching = (value) => value
+  .normalize('NFC')
+  .replace(/\u093c/g, '')
+  .toLocaleLowerCase();
+
+const cleanFieldValue = (value) => value
+  .replace(/^[\s:：=—–-]+|[\s,;।|]+$/g, '')
+  .replace(/\s{2,}/g, ' ')
+  .trim();
+
 const parseDate = (value) => {
   const normalized = normalizeDigits(value);
   let year;
@@ -217,68 +239,132 @@ const parseTime = (value) => {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 };
 
+const findProgramType = (text, programTypes) => {
+  const normalizedText = normalizeForMatching(text);
+  return programTypes
+    .map((type) => ({
+      type,
+      name: String(type.programtyp || type.Programtyp || type.name || '').trim(),
+    }))
+    .filter(({ name }) => name && normalizedText.includes(normalizeForMatching(name)))
+    .sort((first, second) => second.name.length - first.name.length)[0];
+};
+
+const extractDeceasedName = (text) => {
+  const flatText = text.replace(/\s+/g, ' ');
+  const match = flatText.match(
+    /((?:श्री|श्रीमती|श्रीमानू?|सुश्री)\s*[\p{L}\p{M}]+(?:\s+[\p{L}\p{M}]+){0,4}(?:\s*\([^)]*\))?)\s*(?:\([^)]*\)\s*)*का\s+स्वर्गवास/u
+  );
+  return cleanFieldValue(match?.[1] || '');
+};
+
+const extractFamilyRelation = (text) => {
+  const match = text.match(
+    /(?:के|की|का)\s+((?:छोटे|बड़े|बड़े|ज्येष्ठ|कनिष्ठ)\s+(?:भाई|बहन|पुत्र|पुत्री|बेटे|बेटी|पिताजी|पिता|माताजी|माता))/u
+  );
+  return cleanFieldValue(match?.[1] || '');
+};
+
+const extractSenderFromRelationship = (text, relation) => {
+  if (!relation) return '';
+  const relationIndex = text.indexOf(relation);
+  const precedingText = text.slice(0, relationIndex);
+  const match = precedingText.match(/(?:सूचित[^,।]*[,।]\s*)?कि\s*([^,।\n]+)\s*,/u);
+  return cleanFieldValue(match?.[1] || '');
+};
+
 export function suggestInvitationFields(text, programTypes = []) {
   const normalizedText = normalizeDigits(text);
   const suggestions = {};
+  const lines = normalizedText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const flatText = lines.join(' ');
 
   const senderName = extractLabeledValue(
     normalizedText,
     'sender(?:\\s+name)?|inviter(?:\\s+name)?|(?:host|organizer)(?:\\s+name)?|प्रेषक(?:\\s+का)?\\s+नाम|आमंत्रक(?:\\s+का)?\\s+नाम|सादर\\s+आमंत्रक|निवेदक|निमंत्रक|आमंत्रक'
   );
-  if (senderName) suggestions.SenderName = senderName;
+  const familyRelation = extractFamilyRelation(flatText);
+  const inferredSender = extractSenderFromRelationship(flatText, familyRelation);
+  if (senderName || inferredSender) suggestions.SenderName = senderName || inferredSender;
+  if (familyRelation) suggestions.Relation_to_sender = familyRelation;
 
   const phoneNumbers = normalizedText.match(/(?:^|\D)[6-9]\d{9}(?=\D|$)/g) || [];
   const mobile = phoneNumbers[0]?.replace(/\D/g, '');
   if (mobile) suggestions.Mob = mobile;
 
+  const matchingType = findProgramType(normalizedText, programTypes);
+  if (matchingType?.type?.id != null) {
+    suggestions.programtyp = String(matchingType.type.id);
+  }
+
+  const typeName = matchingType?.name;
+  const programLines = typeName
+    ? lines.filter((line) => normalizeForMatching(line).includes(normalizeForMatching(typeName)))
+    : [];
   const dateLabel = extractLabeledValue(
     normalizedText,
     'event\\s+date|program\\s+date|date|दिनांक|तारीख|कार्यक्रम\\s+की?\\s*तारीख|शुभ\\s+विवाह'
   );
-  const datesToCheck = dateLabel
-    ? [dateLabel]
-    : findDateCandidates(normalizedText);
-  const eventDate = datesToCheck.length === 1 ? parseDate(datesToCheck[0]) : '';
+  const dateOnProgramLine = programLines
+    .flatMap((line) => findDateCandidates(line))
+    .map(parseDate)
+    .filter(Boolean);
+  const uniqueProgramDates = [...new Set(dateOnProgramLine)];
+  const allDateCandidates = findDateCandidates(normalizedText).map(parseDate).filter(Boolean);
+  const uniqueDates = [...new Set(allDateCandidates)];
+  const eventDate = uniqueProgramDates.length === 1
+    ? uniqueProgramDates[0]
+    : dateLabel
+      ? parseDate(dateLabel)
+      : uniqueDates.length === 1
+        ? uniqueDates[0]
+        : '';
   if (eventDate) suggestions.Date = eventDate;
 
-  const village = extractLabeledValue(
+  const village = extractInlineLabeledValue(
     normalizedText,
     'village|city|ग्राम|गाँव|गांव|शहर'
   );
-  if (village) suggestions.Village = village;
+  if (village) suggestions.Village = cleanFieldValue(village);
 
-  const district = extractLabeledValue(normalizedText, 'district|जिला');
-  if (district) suggestions.District = district;
+  const districtMatch = flatText.match(/(?:district|जिला)\s*[-:=：]?\s*([^,;।|()]+)/iu);
+  const district = districtMatch?.[1] || extractInlineLabeledValue(normalizedText, 'district|जिला');
+  if (district) suggestions.District = cleanFieldValue(district);
 
   const programFor = extractLabeledValue(
     normalizedText,
     'program\\s+for|for\\s+whom|कार्यक्रम\\s+किसके\\s+लिए|किसके\\s+शुभ'
   );
-  if (programFor) suggestions.ProgramFor = programFor;
+  const inferredProgramFor = extractDeceasedName(flatText);
+  if (programFor || inferredProgramFor) {
+    suggestions.ProgramFor = cleanFieldValue(programFor || inferredProgramFor);
+  }
 
   const relation = extractLabeledValue(
     normalizedText,
     'relation|relationship|संबंध|रिश्ता'
   );
-  if (relation) suggestions.Relation_to_sender = relation;
+  if (relation) suggestions.Relation_to_sender = cleanFieldValue(relation);
 
-  const placeTime = extractLabeledValue(
+  const placeTime = extractInlineLabeledValue(
     normalizedText,
     'venue|place|location|स्थान|कार्यक्रम\\s+स्थल|आयोजन\\s+स्थल'
   );
-  if (placeTime) suggestions.place_time = placeTime;
+  const cleanedPlace = placeTime
+    ?.replace(/[,،]?\s*(?:district|जिला)\s*[-:=：]?.*$/iu, '')
+    .replace(/[,،]?\s*(?:म\.?\s*प्र\.?|मध्य\s+प्रदेश)\s*$/iu, '');
+  if (cleanedPlace) suggestions.place_time = cleanFieldValue(cleanedPlace);
 
-  const timeValue = extractLabeledValue(normalizedText, 'time|समय');
+  const timeValue = extractInlineLabeledValue(normalizedText, 'time|समय');
+  const eventLineTimes = programLines
+    .flatMap((line) => line.match(/\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b/gi) || []);
   const allTimes = normalizedText.match(/\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b/gi) || [];
-  const eventTime = parseTime(timeValue || (allTimes.length === 1 ? allTimes[0] : ''));
+  const eventTime = parseTime(
+    timeValue
+    || (eventLineTimes.length === 1 ? eventLineTimes[0] : '')
+    || (allTimes.length === 1 ? allTimes[0] : '')
+  );
   if (eventTime) suggestions.event_time = eventTime;
-
-  const normalizedForType = normalizedText.toLocaleLowerCase().normalize('NFC');
-  const matchingType = programTypes.find((type) => {
-    const name = String(type.programtyp || type.Programtyp || '').trim();
-    return name && normalizedForType.includes(name.toLocaleLowerCase().normalize('NFC'));
-  });
-  if (matchingType?.id != null) suggestions.programtyp = String(matchingType.id);
 
   return suggestions;
 }

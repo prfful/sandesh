@@ -10,37 +10,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, FileText, Loader2, Save, X, Trash2 } from "lucide-react";
+import { CalendarIcon, Loader2, Save, X, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import ProgramTypeDisplay, { useProgramTypesMap } from "../ProgramDisplay";
+import { ProgramType } from "@/api/entities";
+import { useProgramTypesMap } from "../ProgramDisplay";
 import { readInvitationText, suggestInvitationFields } from "@/utils/invitationOcr";
 
 export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete, isLoading, nextSn }) {
-  const fetchProgramTypes = async () => {
-    const tryUrls = ['/api/entities/ProgramType', '/api/programtypes', '/api/entities/ProgramType/list'];
-    for (const url of tryUrls) {
-      try {
-        const resp = await fetch(url, { credentials: 'same-origin' });
-        if (!resp.ok) continue;
-        const json = await resp.json();
-        if (!json) continue;
-        if (Array.isArray(json)) return json;
-        if (Array.isArray(json.data)) return json.data;
-        if (Array.isArray(json.results)) return json.results;
-        if (typeof json === 'object') return Object.values(json);
-      } catch (e) {
-        // try next
-      }
-    }
-    return [];
-  };
-
-  const { data: programTypes, isLoading: typesLoading } = useQuery({
+  const { data: programTypes = [] } = useQuery({
     queryKey: ['program-types'],
-    queryFn: fetchProgramTypes,
-    initialData: [],
+    queryFn: () => ProgramType.list(),
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   // Normalize programTypes into an array. SDK may return different envelopes
@@ -147,6 +131,7 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
 
   const [errors, setErrors] = useState({});
   const [invitationCardFile, setInvitationCardFile] = useState(null);
+  const [localCardPreviewUrl, setLocalCardPreviewUrl] = useState('');
   const [removeInvitationCard, setRemoveInvitationCard] = useState(false);
   const [uploadingCard, setUploadingCard] = useState(false);
   const [ocrStatus, setOcrStatus] = useState('');
@@ -154,6 +139,17 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const [recognizedText, setRecognizedText] = useState('');
   const ocrRequestId = useRef(0);
+
+  useEffect(() => {
+    if (!invitationCardFile) {
+      setLocalCardPreviewUrl('');
+      return undefined;
+    }
+
+    const previewUrl = URL.createObjectURL(invitationCardFile);
+    setLocalCardPreviewUrl(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [invitationCardFile]);
 
   useEffect(() => {
     setInvitationCardFile(null);
@@ -474,26 +470,51 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
                 </Button>
               </div>
             )}
-            {!invitationCardFile && formData.invitation_card_url && !removeInvitationCard && (
-              <div className="flex items-center justify-between rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm">
-                <a
-                  href={formData.invitation_card_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-orange-700 hover:underline"
-                >
-                  <FileText className="h-4 w-4" />
-                  मौजूदा निमंत्रण कार्ड देखें
-                </a>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setRemoveInvitationCard(true)}
-                >
-                  हटाएं
-                </Button>
+            {(invitationCardFile || (formData.invitation_card_url && !removeInvitationCard)) && (
+              <div className="overflow-hidden rounded-md border border-orange-200 bg-white">
+                <div className="flex items-center justify-between gap-3 border-b border-orange-100 bg-orange-50 px-3 py-2">
+                  <p className="text-sm font-medium text-gray-800">निमंत्रण कार्ड का पूर्वावलोकन</p>
+                  <a
+                    href={invitationCardFile ? localCardPreviewUrl : formData.invitation_card_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 text-xs text-orange-700 hover:underline"
+                  >
+                    नए टैब में खोलें
+                  </a>
+                  {!invitationCardFile && formData.invitation_card_url && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setRemoveInvitationCard(true)}
+                    >
+                      हटाएं
+                    </Button>
+                  )}
+                </div>
+                {(
+                  invitationCardFile?.type === 'application/pdf'
+                  || /\.pdf(?:[?#].*)?$/i.test(invitationCardFile?.name || formData.invitation_card_url || '')
+                ) ? (
+                  <iframe
+                    title="निमंत्रण कार्ड PDF पूर्वावलोकन"
+                    src={invitationCardFile ? localCardPreviewUrl : formData.invitation_card_url}
+                    className="h-[min(70vh,560px)] w-full"
+                  />
+                ) : (
+                  <img
+                    src={invitationCardFile ? localCardPreviewUrl : formData.invitation_card_url}
+                    alt="अपलोड किया गया निमंत्रण कार्ड"
+                    className="max-h-[560px] w-full bg-gray-50 object-contain"
+                  />
+                )}
               </div>
+            )}
+            {invitationCardFile && (
+              <p className="text-xs text-gray-600">
+                OCR से मिले सुझाव नीचे संबंधित फ़ील्ड में दिखेंगे। कार्ड से मिलान करके वहीं सुधार करें।
+              </p>
             )}
             {removeInvitationCard && (
               <p className="text-xs text-amber-700">सहेजने पर मौजूदा कार्ड हट जाएगा।</p>

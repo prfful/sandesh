@@ -357,6 +357,149 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
             </div>
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="invitation-card" className="text-sm font-semibold text-gray-700">
+              निमंत्रण कार्ड की फोटो या PDF
+            </Label>
+            <Input
+              id="invitation-card"
+              type="file"
+              accept=".jpg,.jpeg,.pdf,image/jpeg,application/pdf"
+              disabled={isLoading || uploadingCard}
+              onChange={async (event) => {
+                const file = event.target.files?.[0] || null;
+                if (!file) return;
+                const requestId = ++ocrRequestId.current;
+                setIsOcrProcessing(false);
+                setOcrStatus('');
+                setOcrProgress(0);
+                const validType = file.type === "image/jpeg" || file.type === "application/pdf";
+                const validExtension = /\.(jpe?g|pdf)$/i.test(file.name);
+                if (!validType || !validExtension) {
+                  toast.error("केवल JPEG फोटो या PDF अपलोड करें");
+                  event.target.value = "";
+                  return;
+                }
+                if (file.size > 10 * 1024 * 1024) {
+                  toast.error("फ़ाइल का आकार 10 MB से कम होना चाहिए");
+                  event.target.value = "";
+                  return;
+                }
+                setInvitationCardFile(file);
+                setRemoveInvitationCard(false);
+                setRecognizedText('');
+                setOcrStatus('निमंत्रण से पाठ पढ़ा जा रहा है...');
+                setOcrProgress(0);
+                setIsOcrProcessing(true);
+                try {
+                  const result = await readInvitationText(file, ({ status, progress }) => {
+                    if (requestId !== ocrRequestId.current) return;
+                    setOcrStatus(status);
+                    setOcrProgress(progress);
+                  });
+                  if (requestId !== ocrRequestId.current) return;
+
+                  const suggestions = suggestInvitationFields(
+                    result.text,
+                    pts
+                  );
+                  const suggestedFields = Object.keys(suggestions);
+                  setRecognizedText(result.text.trim());
+                  setFormData((previous) => {
+                    const additions = Object.fromEntries(
+                      Object.entries(suggestions).filter(([field]) =>
+                        previous[field] == null || String(previous[field]).trim() === ''
+                      )
+                    );
+                    return { ...previous, ...additions };
+                  });
+                  setOcrStatus(
+                    suggestedFields.length
+                      ? `OCR ने ${suggestedFields.length} फ़ील्ड के सुझाव दिए। खाली फ़ील्ड भरे गए; सेव करने से पहले जांचें।`
+                      : 'पाठ पढ़ा गया, लेकिन फ़ील्ड के सुझाव नहीं मिले। कृपया विवरण स्वयं भरें।'
+                  );
+                  if (result.truncated) {
+                    setOcrStatus((message) => `${message} PDF के पहले ${result.pageLimit} पृष्ठ पढ़े गए।`);
+                  }
+                } catch (error) {
+                  if (requestId !== ocrRequestId.current) return;
+                  console.error('Invitation card OCR failed:', error);
+                  setOcrStatus('OCR नहीं हो सका। आप कार्ड रखकर विवरण स्वयं भर सकते हैं।');
+                  toast.error(`निमंत्रण पढ़ने में विफल: ${error.message || 'अज्ञात त्रुटि'}`);
+                } finally {
+                  if (requestId === ocrRequestId.current) setIsOcrProcessing(false);
+                }
+              }}
+            />
+            <p className="text-xs text-gray-500">JPEG या PDF, अधिकतम 10 MB। धन्यवाद पत्र भेजने के बाद यह फ़ाइल अपने-आप हट जाएगी।</p>
+            {ocrStatus && (
+              <div className="space-y-2 rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900" aria-live="polite">
+                <div className="flex items-center gap-2">
+                  {isOcrProcessing && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  <span>{ocrStatus}</span>
+                </div>
+                {isOcrProcessing && (
+                  <progress className="h-2 w-full accent-blue-600" max="100" value={ocrProgress} />
+                )}
+                <p className="text-xs text-blue-800">
+                  OCR इसी ब्राउज़र में चलता है, कोई पेड OCR API नहीं है। पहली बार Hindi/English मॉडल डाउनलोड हो सकते हैं। सहेजने से पहले सुझाव जांचें।
+                </p>
+                {recognizedText && (
+                  <details className="text-xs">
+                    <summary className="cursor-pointer font-medium">पहचाना गया पूरा पाठ देखें</summary>
+                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-sans">{recognizedText}</pre>
+                  </details>
+                )}
+              </div>
+            )}
+            {invitationCardFile && (
+              <div className="flex items-center justify-between rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm">
+                <span className="truncate">{invitationCardFile.name}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    ocrRequestId.current += 1;
+                    setInvitationCardFile(null);
+                    setIsOcrProcessing(false);
+                    setOcrStatus('');
+                    setOcrProgress(0);
+                    setRecognizedText('');
+                  }}
+                >
+                  हटाएं
+                </Button>
+              </div>
+            )}
+            {!invitationCardFile && formData.invitation_card_url && !removeInvitationCard && (
+              <div className="flex items-center justify-between rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm">
+                <a
+                  href={formData.invitation_card_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-orange-700 hover:underline"
+                >
+                  <FileText className="h-4 w-4" />
+                  मौजूदा निमंत्रण कार्ड देखें
+                </a>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRemoveInvitationCard(true)}
+                >
+                  हटाएं
+                </Button>
+              </div>
+            )}
+            {removeInvitationCard && (
+              <p className="text-xs text-amber-700">सहेजने पर मौजूदा कार्ड हट जाएगा।</p>
+            )}
+          </div>
+
           {/* Row 2: Sender Name, Mobile */}
           <div className="grid md:grid-cols-2 gap-6">
             <div className="space-y-2">
@@ -508,149 +651,6 @@ export default function ProgramForm({ initialData, onSubmit, onCancel, onDelete,
               placeholder="कोई अतिरिक्त जानकारी"
               rows={3}
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="invitation-card" className="text-sm font-semibold text-gray-700">
-              निमंत्रण कार्ड की फोटो या PDF
-            </Label>
-            <Input
-              id="invitation-card"
-              type="file"
-              accept=".jpg,.jpeg,.pdf,image/jpeg,application/pdf"
-              disabled={isLoading || uploadingCard}
-              onChange={async (event) => {
-                const file = event.target.files?.[0] || null;
-                if (!file) return;
-                const requestId = ++ocrRequestId.current;
-                setIsOcrProcessing(false);
-                setOcrStatus('');
-                setOcrProgress(0);
-                const validType = file.type === "image/jpeg" || file.type === "application/pdf";
-                const validExtension = /\.(jpe?g|pdf)$/i.test(file.name);
-                if (!validType || !validExtension) {
-                  toast.error("केवल JPEG फोटो या PDF अपलोड करें");
-                  event.target.value = "";
-                  return;
-                }
-                if (file.size > 10 * 1024 * 1024) {
-                  toast.error("फ़ाइल का आकार 10 MB से कम होना चाहिए");
-                  event.target.value = "";
-                  return;
-                }
-                setInvitationCardFile(file);
-                setRemoveInvitationCard(false);
-                setRecognizedText('');
-                setOcrStatus('निमंत्रण से पाठ पढ़ा जा रहा है...');
-                setOcrProgress(0);
-                setIsOcrProcessing(true);
-                try {
-                  const result = await readInvitationText(file, ({ status, progress }) => {
-                    if (requestId !== ocrRequestId.current) return;
-                    setOcrStatus(status);
-                    setOcrProgress(progress);
-                  });
-                  if (requestId !== ocrRequestId.current) return;
-
-                  const suggestions = suggestInvitationFields(
-                    result.text,
-                    pts
-                  );
-                  const suggestedFields = Object.keys(suggestions);
-                  setRecognizedText(result.text.trim());
-                  setFormData((previous) => {
-                    const additions = Object.fromEntries(
-                      Object.entries(suggestions).filter(([field]) =>
-                        previous[field] == null || String(previous[field]).trim() === ''
-                      )
-                    );
-                    return { ...previous, ...additions };
-                  });
-                  setOcrStatus(
-                    suggestedFields.length
-                      ? `OCR ने ${suggestedFields.length} फ़ील्ड के सुझाव दिए। खाली फ़ील्ड भरे गए; सेव करने से पहले जांचें।`
-                      : 'पाठ पढ़ा गया, लेकिन फ़ील्ड के सुझाव नहीं मिले। कृपया विवरण स्वयं भरें।'
-                  );
-                  if (result.truncated) {
-                    setOcrStatus((message) => `${message} PDF के पहले ${result.pageLimit} पृष्ठ पढ़े गए।`);
-                  }
-                } catch (error) {
-                  if (requestId !== ocrRequestId.current) return;
-                  console.error('Invitation card OCR failed:', error);
-                  setOcrStatus('OCR नहीं हो सका। आप कार्ड रखकर विवरण स्वयं भर सकते हैं।');
-                  toast.error(`निमंत्रण पढ़ने में विफल: ${error.message || 'अज्ञात त्रुटि'}`);
-                } finally {
-                  if (requestId === ocrRequestId.current) setIsOcrProcessing(false);
-                }
-              }}
-            />
-            <p className="text-xs text-gray-500">JPEG या PDF, अधिकतम 10 MB। धन्यवाद पत्र भेजने के बाद यह फ़ाइल अपने-आप हट जाएगी।</p>
-            {ocrStatus && (
-              <div className="space-y-2 rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900" aria-live="polite">
-                <div className="flex items-center gap-2">
-                  {isOcrProcessing && (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  )}
-                  <span>{ocrStatus}</span>
-                </div>
-                {isOcrProcessing && (
-                  <progress className="h-2 w-full accent-blue-600" max="100" value={ocrProgress} />
-                )}
-                <p className="text-xs text-blue-800">
-                  OCR इसी ब्राउज़र में चलता है, कोई पेड OCR API नहीं है। पहली बार Hindi/English मॉडल डाउनलोड हो सकते हैं। सहेजने से पहले सुझाव जांचें।
-                </p>
-                {recognizedText && (
-                  <details className="text-xs">
-                    <summary className="cursor-pointer font-medium">पहचाना गया पूरा पाठ देखें</summary>
-                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-sans">{recognizedText}</pre>
-                  </details>
-                )}
-              </div>
-            )}
-            {invitationCardFile && (
-              <div className="flex items-center justify-between rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm">
-                <span className="truncate">{invitationCardFile.name}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    ocrRequestId.current += 1;
-                    setInvitationCardFile(null);
-                    setIsOcrProcessing(false);
-                    setOcrStatus('');
-                    setOcrProgress(0);
-                    setRecognizedText('');
-                  }}
-                >
-                  हटाएं
-                </Button>
-              </div>
-            )}
-            {!invitationCardFile && formData.invitation_card_url && !removeInvitationCard && (
-              <div className="flex items-center justify-between rounded-md border border-orange-100 bg-orange-50 px-3 py-2 text-sm">
-                <a
-                  href={formData.invitation_card_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-orange-700 hover:underline"
-                >
-                  <FileText className="h-4 w-4" />
-                  मौजूदा निमंत्रण कार्ड देखें
-                </a>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setRemoveInvitationCard(true)}
-                >
-                  हटाएं
-                </Button>
-              </div>
-            )}
-            {removeInvitationCard && (
-              <p className="text-xs text-amber-700">सहेजने पर मौजूदा कार्ड हट जाएगा।</p>
-            )}
           </div>
 
           {/* Row 7: Checkboxes */}

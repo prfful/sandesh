@@ -104,6 +104,9 @@ export default function PoliticianEntry() {
   const [formData, setFormData] = useState(initialForm);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [selectedDesignation, setSelectedDesignation] = useState("");
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   
   // Bulk import state
   const [bulkDesignation, setBulkDesignation] = useState(null);
@@ -154,6 +157,52 @@ export default function PoliticianEntry() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['politicians'] });
       toast.success("हटा दिया गया");
+    },
+  });
+
+  const bulkDesignationMutation = useMutation({
+    mutationFn: async ({ ids, designation }) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => Politician.update(id, { Designation: designation }))
+      );
+      return {
+        succeededIds: ids.filter((_, index) => results[index].status === "fulfilled"),
+        failedIds: ids.filter((_, index) => results[index].status === "rejected"),
+      };
+    },
+    onSuccess: ({ succeededIds, failedIds }) => {
+      queryClient.invalidateQueries({ queryKey: ['politicians'] });
+      setSelectedIds(failedIds);
+      if (failedIds.length > 0) {
+        toast.error(`पद बदले गए: ${succeededIds.length}, त्रुटि: ${failedIds.length}`);
+      } else {
+        toast.success(`${succeededIds.length} रिकॉर्ड का पद बदल दिया गया`);
+      }
+    },
+    onError: (error) => {
+      toast.error(`पद बदलने में त्रुटि: ${error.message}`);
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids) => {
+      const results = await Promise.allSettled(ids.map((id) => Politician.delete(id)));
+      return {
+        succeededIds: ids.filter((_, index) => results[index].status === "fulfilled"),
+        failedIds: ids.filter((_, index) => results[index].status === "rejected"),
+      };
+    },
+    onSuccess: ({ succeededIds, failedIds }) => {
+      queryClient.invalidateQueries({ queryKey: ['politicians'] });
+      setSelectedIds(failedIds);
+      if (failedIds.length > 0) {
+        toast.error(`हटाए गए: ${succeededIds.length}, त्रुटि: ${failedIds.length}`);
+      } else {
+        toast.success(`${succeededIds.length} रिकॉर्ड हटा दिए गए`);
+      }
+    },
+    onError: (error) => {
+      toast.error(`रिकॉर्ड हटाने में त्रुटि: ${error.message}`);
     },
   });
 
@@ -529,6 +578,51 @@ export default function PoliticianEntry() {
             <CardTitle className="text-xl font-bold text-gray-900">रिकॉर्ड सूची ({filtered.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-6 overflow-auto">
+            {selectedIds.length > 0 && (
+              <div className="flex flex-col md:flex-row md:items-end gap-3 mb-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                <p className="font-medium text-gray-800 md:mr-auto">
+                  {selectedIds.length} रिकॉर्ड चुने गए
+                </p>
+                <div className="w-full md:w-64">
+                  <Label htmlFor="bulk-designation">चयनित रिकॉर्ड का पद बदलें</Label>
+                  <Select value={selectedDesignation} onValueChange={setSelectedDesignation}>
+                    <SelectTrigger id="bulk-designation">
+                      <SelectValue placeholder="नया पद चुनें" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {types.map((type) => (
+                        <SelectItem key={type.id} value={String(type.id)}>{type.Designation}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  className="gap-2"
+                  onClick={() => bulkDesignationMutation.mutate({
+                    ids: selectedIds,
+                    designation: Number(selectedDesignation),
+                  })}
+                  disabled={!selectedDesignation || bulkDesignationMutation.isPending || bulkDeleteMutation.isPending}
+                >
+                  <Save className="w-4 h-4" /> पद सेव करें
+                </Button>
+                <Button
+                  variant="outline"
+                  className="gap-2 text-red-600 hover:text-red-700"
+                  onClick={() => setConfirmBulkDelete(true)}
+                  disabled={bulkDesignationMutation.isPending || bulkDeleteMutation.isPending}
+                >
+                  <Trash2 className="w-4 h-4" /> चयनित हटाएं
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => setSelectedIds([])}
+                  disabled={bulkDesignationMutation.isPending || bulkDeleteMutation.isPending}
+                >
+                  चयन हटाएं
+                </Button>
+              </div>
+            )}
             {isLoading ? (
               <p className="text-center text-gray-500 py-8">लोड हो रहा है...</p>
             ) : filtered.length === 0 ? (
@@ -537,6 +631,18 @@ export default function PoliticianEntry() {
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="text-left border-b">
+                    <th className="py-2 px-2">
+                      <Checkbox
+                        aria-label="दिखाए गए सभी रिकॉर्ड चुनें"
+                        checked={filtered.length > 0 && filtered.every((row) => selectedIds.includes(row.id))}
+                        onCheckedChange={(checked) => {
+                          const visibleIds = filtered.map((row) => row.id);
+                          setSelectedIds((current) => checked
+                            ? [...new Set([...current, ...visibleIds])]
+                            : current.filter((id) => !visibleIds.includes(id)));
+                        }}
+                      />
+                    </th>
                     <th className="py-2 px-2">ID</th>
                     <th className="py-2 px-2">नाम</th>
                     <th className="py-2 px-2">मोबाइल</th>
@@ -549,6 +655,15 @@ export default function PoliticianEntry() {
                 <tbody>
                   {filtered.map(row => (
                     <tr key={row.id} className="border-b hover:bg-orange-50">
+                      <td className="py-2 px-2">
+                        <Checkbox
+                          aria-label={`${row.Name || "रिकॉर्ड"} चुनें`}
+                          checked={selectedIds.includes(row.id)}
+                          onCheckedChange={(checked) => setSelectedIds((current) => checked
+                            ? [...new Set([...current, row.id])]
+                            : current.filter((id) => id !== row.id))}
+                        />
+                      </td>
                       <td className="py-2 px-2">{row.id}</td>
                       <td className="py-2 px-2">{row.Name}</td>
                       <td className="py-2 px-2">{row.Mobile}</td>
@@ -565,6 +680,26 @@ export default function PoliticianEntry() {
             )}
           </CardContent>
         </Card>
+
+        <AlertDialog open={confirmBulkDelete} onOpenChange={setConfirmBulkDelete}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>चयनित रिकॉर्ड हटाएं?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {selectedIds.length} चयनित रिकॉर्ड स्थायी रूप से हट जाएंगे। इस कार्रवाई को वापस नहीं किया जा सकता।
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>रद्द करें</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700"
+                onClick={() => bulkDeleteMutation.mutate(selectedIds)}
+              >
+                हटाएं
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

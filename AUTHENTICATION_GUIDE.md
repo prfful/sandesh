@@ -73,11 +73,11 @@ updated_date      DATETIME
 ```
 User visits website
   ↓
-Layout component checks localStorage for operator_token
+Layout component checks sessionStorage for operator_token
   ↓
 If no token → Redirect to /OperatorLogin
   ↓
-If token exists → Load operator_data from localStorage
+If token exists → Validate it with the server and load the operator profile
   ↓
 Render app with user's permissions
 ```
@@ -92,7 +92,7 @@ Server validates credentials
   ↓
 Server returns token + operator data
   ↓
-Client stores in localStorage:
+Client stores in sessionStorage:
   - operator_token: session token
   - operator_data: JSON with user info, role, permissions
   ↓
@@ -105,7 +105,7 @@ On every page load, Layout component:
   ↓
 Calls restClient.authMe()
   ↓
-Reads operator_data from localStorage
+Validates the token with the server and reads the current operator record
   ↓
 If invalid or missing → Redirect to login
   ↓
@@ -116,7 +116,7 @@ If valid → Set currentUser and render page
 ```
 User clicks logout button
   ↓
-Clear localStorage:
+Revoke the server-side session, then clear browser storage:
   - Remove operator_token
   - Remove operator_data
   ↓
@@ -218,23 +218,21 @@ const canEditProgram = currentUser.permissions?.can_edit_program === true;
 
 ## Security Considerations
 
-### Current Implementation
-- SHA-256 password hashing
-- Token stored in localStorage (client-side only)
-- Server validates email/password on login
-- Token is simple hash (not JWT)
+### Current API Protections
+- API data/action endpoints require a server-issued bearer token, except login and the health check. The legacy `/api/uploads/:filename` proxy remains public, as do files served from `/uploads`.
+- The server looks up the operator and checks that the account remains active on every API request.
+- Tokens are generated with cryptographically secure randomness, expire after eight hours, and are revoked on logout.
+- Operator/User entity APIs are admin-only. Operator responses omit `password_hash`.
+- The frontend validates the token with the server; cached `operator_data` is not used as proof of identity.
 
-### Recommended Improvements for Production
-1. **Use JWT tokens** instead of simple hashes
-2. **Add token expiry** and refresh mechanism
-3. **Implement HTTPS** for all communications
-4. **Add rate limiting** on login endpoint
-5. **Store tokens in httpOnly cookies** instead of localStorage
-6. **Add CSRF protection**
-7. **Implement password strength requirements**
-8. **Add password reset functionality**
-9. **Log security events** (failed logins, permission changes)
-10. **Add two-factor authentication** option
+Sessions are held in server memory, so a server restart invalidates active sessions. A multi-instance deployment needs a shared session store to validate tokens across instances.
+
+### Remaining Production Hardening
+- Login passwords are still hashed with SHA-256. Migrate to Argon2id, scrypt, or appropriately configured bcrypt, and rehash/reset existing passwords.
+- Add per-IP and per-account login throttling, failed-attempt monitoring, and consider MFA.
+- Enforce HTTPS in production. Treat browser storage tokens as sensitive; use secure, HttpOnly cookies with CSRF protection if moving to cookie-based sessions.
+- Implement password strength requirements and password reset functionality.
+- Log security events such as failed logins and permission changes without logging passwords or tokens.
 
 ## Default Admin User
 
@@ -248,11 +246,11 @@ After running `node create-admin-user.js`:
 
 ### "No token provided" error
 - User not logged in or token expired
-- Clear localStorage and login again
+- Sign in again. Server restarts also invalidate in-memory sessions.
 
 ### User redirected to login immediately
-- Check operator_data in localStorage is valid JSON
-- Verify token exists in localStorage
+- Verify a token exists in sessionStorage
+- Check that the API is reachable and that the server session has not expired or been restarted
 - Check browser console for errors
 
 ### Changes not reflecting
@@ -275,9 +273,8 @@ After running `node create-admin-user.js`:
 
 ### Debugging Auth Issues
 ```javascript
-// In browser console:
-console.log('Token:', localStorage.getItem('operator_token'));
-console.log('User:', JSON.parse(localStorage.getItem('operator_data')));
+// In browser console, check whether a session is present without printing the token:
+console.log('Session present:', Boolean(sessionStorage.getItem('operator_token')));
 ```
 
 ### Adding New Pages

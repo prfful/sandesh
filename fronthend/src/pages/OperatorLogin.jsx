@@ -53,8 +53,6 @@ export default function OperatorLogin() {
         password
       });
 
-      console.log("Login response:", response);
-
       if (response?.success) {
         const token = response.token;
         const operator = response.operator;

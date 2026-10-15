@@ -126,6 +126,20 @@ export default function Layout({ children, currentPageName }) {
   const [currentUser, setCurrentUser] = React.useState(null);
   const [redirecting, setRedirecting] = React.useState(false);
 
+  const handleLogout = async () => {
+    try {
+      await restClient.invokeFunction('operatorAuth', { action: 'logout' });
+    } catch (error) {
+      console.error('Logout request failed:', error);
+    } finally {
+      sessionStorage.removeItem('operator_token');
+      sessionStorage.removeItem('operator_data');
+      localStorage.removeItem('operator_token');
+      localStorage.removeItem('operator_data');
+      window.location.href = createPageUrl('OperatorLogin');
+    }
+  };
+
   // Check authentication on mount
   React.useEffect(() => {
     const checkAuth = async () => {
@@ -375,13 +389,7 @@ export default function Layout({ children, currentPageName }) {
                 </p>
               </div>
               <button 
-                onClick={() => {
-                  sessionStorage.removeItem('operator_token');
-                  sessionStorage.removeItem('operator_data');
-                  localStorage.removeItem('operator_token');
-                  localStorage.removeItem('operator_data');
-                  window.location.href = createPageUrl('OperatorLogin');
-                }}
+                onClick={handleLogout}
                 className="p-2 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500 transition-colors"
                 title="लॉगआउट"
               >
@@ -417,13 +425,7 @@ export default function Layout({ children, currentPageName }) {
                   </div>
                 </div>
                 <button 
-                  onClick={() => {
-                    sessionStorage.removeItem('operator_token');
-                    sessionStorage.removeItem('operator_data');
-                    localStorage.removeItem('operator_token');
-                    localStorage.removeItem('operator_data');
-                    window.location.href = createPageUrl('OperatorLogin');
-                  }}
+                  onClick={handleLogout}
                   className="flex items-center gap-2 px-3 py-2 bg-red-50 hover:bg-red-100 rounded-lg text-red-600 hover:text-red-700 transition-colors text-sm font-medium"
                   title="लॉगआउट"
                 >

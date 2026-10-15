@@ -4,6 +4,11 @@
 // Get API base URL from environment or default to relative path
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
+const authHeaders = (headers = {}) => {
+  const token = sessionStorage.getItem('operator_token');
+  return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
+};
+
 const wrapJson = async (resp) => {
   const text = await resp.text();
   try {
@@ -44,66 +49,23 @@ const normalizePragramId = (record) => {
 };
 
 export async function authMe() {
-  // Get token from session storage (cleared on browser restart)
   const token = sessionStorage.getItem('operator_token');
-  const operatorData = sessionStorage.getItem('operator_data');
-  
-  // If we have operator data in localStorage, return it directly
-  // This avoids unnecessary server calls and works with the token-based auth
-  if (operatorData) {
-    try {
-      const parsed = JSON.parse(operatorData);
-
-      // Normalize page_permissions to array (handles string, array, null)
-      const normalizePages = (val) => {
-        if (!val) return [];
-        if (Array.isArray(val)) return val;
-        if (typeof val === 'string') {
-          try {
-            const parsedVal = JSON.parse(val);
-            return Array.isArray(parsedVal) ? parsedVal : [];
-          } catch (_err) {
-            return [];
-          }
-        }
-        return [];
-      };
-
-      return {
-        ...parsed,
-        page_permissions: normalizePages(parsed.page_permissions),
-      };
-    } catch (e) {
-      // If parsing fails, remove corrupted data
-      sessionStorage.removeItem('operator_data');
-      sessionStorage.removeItem('operator_token');
-    }
-  }
-  
-  // If no token, user is not authenticated
   if (!token) {
     throw new Error('Not authenticated');
   }
-  
-  // In development mode, allow dev token
-  if (token === 'dev-token') {
-    return {
-      id: 'dev',
-      name: 'Developer',
-      role: 'admin',
-      permissions: {
-        can_add_program: true,
-        can_edit_program: true,
-        can_view_reminder: true,
-        can_mark_attended: true,
-        can_generate_letter: true,
-      },
-      pages: []
-    };
+
+  const resp = await fetch(`${API_BASE_URL}/auth/me`, {
+    credentials: 'same-origin',
+    headers: authHeaders(),
+  });
+  const json = await wrapJson(resp);
+  if (!resp.ok) {
+    sessionStorage.removeItem('operator_data');
+    sessionStorage.removeItem('operator_token');
+    throw new Error(json?.error || 'Invalid or expired token');
   }
-  
-  // Otherwise return error to force re-login
-  throw new Error('Invalid or expired token');
+
+  return json;
 }
 
 export async function listEntities(entity, body = null) {
@@ -116,10 +78,10 @@ export async function listEntities(entity, body = null) {
   ];
   for (const url of urls) {
     try {
-      const opts = { credentials: 'same-origin' };
+      const opts = { credentials: 'same-origin', headers: authHeaders() };
       if (body) {
         opts.method = 'POST';
-        opts.headers = { 'Content-Type': 'application/json' };
+        opts.headers = authHeaders({ 'Content-Type': 'application/json' });
         opts.body = JSON.stringify(body);
       }
       const resp = await fetch(url, opts);
@@ -141,7 +103,10 @@ export async function listEntities(entity, body = null) {
 }
 
 export async function getEntity(entity, id) {
-  const resp = await fetch(`${API_BASE_URL}/entities/${entity}/${id}`, { credentials: 'same-origin' });
+  const resp = await fetch(`${API_BASE_URL}/entities/${entity}/${id}`, {
+    credentials: 'same-origin',
+    headers: authHeaders(),
+  });
   if (!resp.ok) throw new Error('not found');
 
   const json = await wrapJson(resp);
@@ -158,7 +123,7 @@ export async function createEntity(entity, payload) {
   const resp = await fetch(`${API_BASE_URL}/entities/${entity}`, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
   const json = await wrapJson(resp);
@@ -173,7 +138,7 @@ export async function updateEntity(entity, id, payload) {
   const resp = await fetch(`${API_BASE_URL}/entities/${entity}/${id}`, {
     method: 'PUT',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
   if (!resp.ok) throw new Error('update failed');
@@ -184,6 +149,7 @@ export async function deleteEntity(entity, id) {
   const resp = await fetch(`${API_BASE_URL}/entities/${entity}/${id}`, {
     method: 'DELETE',
     credentials: 'same-origin',
+    headers: authHeaders(),
   });
   const json = await wrapJson(resp);
   if (!resp.ok) {
@@ -196,6 +162,7 @@ export async function uploadFile(formData) {
   const resp = await fetch(`${API_BASE_URL}/integrations/Core/UploadFile`, {
     method: 'POST',
     credentials: 'same-origin',
+    headers: authHeaders(),
     body: formData,
   });
   return await wrapJson(resp);
@@ -203,20 +170,29 @@ export async function uploadFile(formData) {
 
 export async function invokeFunction(name, payload) {
   // API_BASE_URL already includes /api, so just append /functions/
-  const resp = await fetch(`${API_BASE_URL}/functions/${encodeURIComponent(name)}`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const json = await wrapJson(resp);
-  
-  console.log(`[invokeFunction] ${name} - Status: ${resp.status}, Response:`, json);
-  
-  if (!resp.ok) {
-    throw new Error((json && json.error) ? json.error : `function invocation failed with status ${resp.status}`);
+  const url = `${API_BASE_URL}/functions/${encodeURIComponent(name)}`;
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    const json = await wrapJson(resp);
+
+    console.log(`[invokeFunction] ${name} - Status: ${resp.status}`);
+
+    if (!resp.ok) {
+      throw new Error((json && json.error) ? json.error : `function invocation failed with status ${resp.status}`);
+    }
+    return json;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const networkHint = `API unavailable at ${url}. Start the backend with "npm run api" and ensure MySQL is reachable.`;
+    console.error(`[invokeFunction] ${name} failed:`, message);
+    throw new Error(message.includes('Failed to fetch') ? networkHint : message);
   }
-  return json;
 }
 
 export default {

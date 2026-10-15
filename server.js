@@ -6,7 +6,7 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { createHash, randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import http from 'http';
 import https from 'https';
 
@@ -254,6 +254,15 @@ const getTable = (entity) => {
   return ENTITY_TABLES[entity] || ENTITY_TABLES[entity.charAt(0).toUpperCase() + entity.slice(1)];
 };
 
+const OPERATOR_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const operatorSessions = new Map();
+
+const removePasswordHash = (record) => {
+  if (!record || typeof record !== 'object') return record;
+  const { password_hash, ...safeRecord } = record;
+  return safeRecord;
+};
+
 const tableColumnsCache = new Map();
 
 const getTableColumns = async (table) => {
@@ -318,6 +327,52 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+app.use('/api', async (req, res, next) => {
+  if (req.path === '/health' || (req.path === '/functions/operatorAuth' && req.method === 'POST' && req.body?.action === 'login')) {
+    return next();
+  }
+
+  const token = req.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const session = token ? operatorSessions.get(token) : null;
+  if (!session || session.expiresAt <= Date.now()) {
+    if (token) operatorSessions.delete(token);
+    return res.status(401).json({ error: 'authentication_required' });
+  }
+
+  try {
+    const [operators] = await pool.query(
+      'SELECT id, name, email, role, permissions, page_permissions, is_active FROM operator WHERE id = ? LIMIT 1',
+      [session.operatorId]
+    );
+    const operator = operators[0];
+    if (!operator || Number(operator.is_active) !== 1) {
+      operatorSessions.delete(token);
+      return res.status(401).json({ error: 'invalid_or_inactive_session' });
+    }
+
+    req.operator = operator;
+    req.authToken = token;
+
+    const entityMatch = req.originalUrl.match(/^\/api\/entities\/([^/?]+)/i);
+    if (entityMatch) {
+      let entity;
+      try {
+        entity = decodeURIComponent(entityMatch[1]);
+      } catch {
+        return res.status(400).json({ error: 'invalid_entity' });
+      }
+      if (getTable(entity) === 'operator' && operator.role !== 'admin') {
+        return res.status(403).json({ error: 'admin_required' });
+      }
+    }
+
+    return next();
+  } catch (error) {
+    console.error('API authentication failed:', error);
+    return res.status(500).json({ error: 'authentication_failed' });
+  }
+});
+
 // Auth endpoints
 app.get('/api/debug/entity-tables', (req, res) => {
   res.json(ENTITY_TABLES);
@@ -369,58 +424,23 @@ app.get('/api/debug-env', (req, res) => {
 });
 
 app.get('/api/auth/isAuthenticated', async (req, res) => {
-  // Check for token in Authorization header or query parameter
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-  
-  if (!token) {
-    return res.status(401).json({ authenticated: false, error: 'No token provided' });
-  }
-
-  // For development, you can optionally allow a dev token
-  if (token === 'dev-token' && process.env.NODE_ENV === 'development') {
-    return res.json({ authenticated: true });
-  }
-
-  // In production, validate token against database or JWT signature
-  // For now, just check if token exists in localStorage (client-side)
   return res.json({ authenticated: true });
 });
 
 app.get('/api/auth/me', async (req, res) => {
   try {
-    // Check for token in Authorization header or query parameter
-    const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-    
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-
-    // In development mode, allow dev token for testing
-    if (token === 'dev-token' && process.env.NODE_ENV === 'development') {
-      return res.json({ 
-        id: 'dev', 
-        name: 'Developer', 
-        role: 'admin', 
-        permissions: {
-          can_add_program: true,
-          can_edit_program: true,
-          can_view_reminder: true,
-          can_mark_attended: true,
-          can_generate_letter: true,
-        },
-        pages: [] // Empty means access to all pages
-      });
-    }
-
-    // Get operator_token from localStorage (passed via query or header)
-    // In a real JWT implementation, decode and verify the token
-    // For now, we'll trust the token and fetch user from localStorage data
-    // This is simplified - in production use proper JWT verification
-    
-    // Since we can't access localStorage from server, client must send operator data
-    // Or we decode a JWT token. For now, return 401 to force re-login
-    return res.status(401).json({ error: 'Invalid or expired token' });
-    
+    const parsePermissions = (value) => {
+      try {
+        return JSON.parse(value || '[]');
+      } catch {
+        return [];
+      }
+    };
+    return res.json({
+      ...req.operator,
+      permissions: parsePermissions(req.operator.permissions),
+      page_permissions: parsePermissions(req.operator.page_permissions),
+    });
   } catch (error) {
     console.error('Auth error:', error);
     return res.status(500).json({ error: 'Authentication failed' });
@@ -477,7 +497,7 @@ app.get('/api/entities/:entity', async (req, res) => {
       console.log('[GET lettertemplate] First row keys:', Object.keys(rows[0]));
       console.log('[GET lettertemplate] First row id value:', rows[0].id, 'type:', typeof rows[0].id);
     }
-    return res.json(rows);
+    return res.json(table === 'operator' ? rows.map(removePasswordHash) : rows);
   } catch (err) {
     console.error(`❌ Query error for table ${table}:`, err.code, err.message);
     return res.status(500).json({ 
@@ -494,7 +514,7 @@ app.get('/api/entities/:entity/list', async (req, res) => {
   if (!table) return res.status(400).json({ error: 'unsupported_entity' });
   try {
     const [rows] = await pool.query('SELECT * FROM ??', [table]);
-    return res.json(rows);
+    return res.json(table === 'operator' ? rows.map(removePasswordHash) : rows);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -506,7 +526,7 @@ app.post('/api/entities/:entity/list', async (req, res) => {
   if (!table) return res.status(400).json({ error: 'unsupported_entity' });
   try {
     const [rows] = await pool.query('SELECT * FROM ??', [table]);
-    return res.json(rows);
+    return res.json(table === 'operator' ? rows.map(removePasswordHash) : rows);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -524,7 +544,7 @@ app.get('/api/entities/:entity/:id', async (req, res) => {
     if (!rows.length) {
       return res.status(404).json({ error: 'not_found' });
     }
-    return res.json(rows[0]);
+    return res.json(table === 'operator' ? removePasswordHash(rows[0]) : rows[0]);
   } catch (err) {
     console.error('Error fetching entity:', err.message);
     return res.status(500).json({ error: err.message });
@@ -541,15 +561,12 @@ app.post('/api/entities/:entity', async (req, res) => {
   }
   try {
     console.log(`\n=== CREATE ${table} ===`);
-    console.log('Raw payload:', payload);
 
     // CRITICAL: Remove blank id values FIRST before any other processing
     if (payload.id === '' || payload.id === null || payload.id === undefined) {
       console.log(`[CRITICAL] Removing blank/null id from ${table} create payload`);
       delete payload.id;
     }
-
-    console.log('Payload after id cleanup:', payload);
 
     const allowedColumns = await getTableColumns(table);
     if (!allowedColumns.length) {
@@ -597,7 +614,7 @@ app.post('/api/entities/:entity', async (req, res) => {
       }
     }
 
-    console.log(`[INSERT ${table}] Final payload:`, insertPayload);
+    console.log(`[INSERT ${table}] Columns:`, Object.keys(insertPayload));
     
     // CRITICAL: Prevent blank/null id from being inserted
     if (insertPayload.id === '' || insertPayload.id === null) {
@@ -610,7 +627,7 @@ app.post('/api/entities/:entity', async (req, res) => {
       return res.status(400).json({ error: 'empty_payload_after_validation', message: 'No valid columns in insert payload' });
     }
     
-    console.log(`[INSERT ${table}] FINAL sanitized payload:`, insertPayload);
+    console.log(`[INSERT ${table}] Sanitized columns:`, Object.keys(insertPayload));
     
     // Execute INSERT
     const [result] = await pool.query('INSERT INTO ?? SET ?', [table, insertPayload]);
@@ -648,11 +665,11 @@ app.post('/api/entities/:entity', async (req, res) => {
     
     if (!rows || !rows[0]) {
       console.warn(`[INSERT ${table}] Could not retrieve inserted record. Returning minimal response.`);
-      return res.status(201).json({ id: newId, ...insertPayload });
+      return res.status(201).json(removePasswordHash({ id: newId, ...insertPayload }));
     }
     
     console.log(`[INSERT ${table}] Successfully retrieved inserted record`);
-    return res.status(201).json(rows[0]);
+    return res.status(201).json(table === 'operator' ? removePasswordHash(rows[0]) : rows[0]);
   } catch (err) {
     console.error('Create error:', err);
     return res.status(500).json({ error: err.message, details: err.sqlMessage || err.toString() });
@@ -667,7 +684,7 @@ app.put('/api/entities/:entity/:id', async (req, res) => {
   try {
     console.log(`\n=== UPDATE ${table} ===`);
     console.log('ID:', req.params.id);
-    console.log('Payload:', payload);
+    console.log('Payload columns:', Object.keys(payload));
 
     const allowedColumns = await getTableColumns(table);
     if (!allowedColumns.length) {
@@ -743,7 +760,8 @@ app.put('/api/entities/:entity/:id', async (req, res) => {
       'SELECT * FROM ?? WHERE ?? = ? LIMIT 1',
       [table, identifierColumn, identifier]
     );
-    return res.json(rows[0] || { id: req.params.id, ...updatePayload });
+    const updatedRecord = rows[0] || { id: req.params.id, ...updatePayload };
+    return res.json(table === 'operator' ? removePasswordHash(updatedRecord) : updatedRecord);
   } catch (err) {
     console.error(`Update error for ${table}:`, err);
     return res.status(500).json({ error: err.message });
@@ -952,7 +970,7 @@ app.post('/api/functions/sendWhatsAppDirect', async (req, res) => {
 // Authentication function - handles login and token verification
 app.post('/api/functions/operatorAuth', async (req, res) => {
   try {
-    const { action, email, password, token } = req.body;
+    const { action, email, password } = req.body;
 
     // Check if database is connected
     if (!pool) {
@@ -998,17 +1016,21 @@ app.post('/api/functions/operatorAuth', async (req, res) => {
       }
 
       // Check if operator is active
-      if (!operator.is_active) {
+      if (Number(operator.is_active) !== 1) {
         return res.status(403).json({ 
           success: false,
           error: 'यह खाता अक्षम है। व्यवस्थापक से संपर्क करें।' 
         });
       }
 
-      // Generate simple token (email-based for simplicity, can be enhanced with JWT)
-      const token = createHash('sha256')
-        .update(`${operator.id}-${operator.email}-${Date.now()}`)
-        .digest('hex');
+      const token = randomBytes(32).toString('hex');
+      for (const [activeToken, session] of operatorSessions) {
+        if (session.expiresAt <= Date.now()) operatorSessions.delete(activeToken);
+      }
+      operatorSessions.set(token, {
+        operatorId: operator.id,
+        expiresAt: Date.now() + OPERATOR_SESSION_TTL_MS,
+      });
 
       // Update last_login timestamp
       await pool.query(
@@ -1048,24 +1070,13 @@ app.post('/api/functions/operatorAuth', async (req, res) => {
       });
 
     } else if (action === 'verify') {
-      // Simple token verification - in production, use JWT
-      // For now, just check if token is provided
-      if (!token) {
-        return res.status(401).json({ 
-          success: false,
-          error: 'टोकन गायब है' 
-        });
-      }
-
-      // In a real implementation, validate the token signature
-      // For now, we just verify it's not empty (JWT would verify signature)
       return res.json({
         success: true,
-        message: 'टोकन वैलिड है'
+        message: 'टोकन वैलिड है',
       });
 
     } else if (action === 'logout') {
-      // Logout - token becomes invalid
+      operatorSessions.delete(req.authToken);
       return res.json({
         success: true,
         message: 'सफलतापूर्वक लॉगआउट'

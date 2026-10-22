@@ -128,7 +128,7 @@ export async function createEntity(entity, payload) {
   });
   const json = await wrapJson(resp);
   if (!resp.ok) {
-    const msg = (json && json.error) ? json.error : 'create failed';
+    const msg = (json && (json.message || json.error)) ? (json.message || json.error) : 'create failed';
     throw new Error(msg);
   }
   return json;
@@ -141,8 +141,11 @@ export async function updateEntity(entity, id, payload) {
     headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
-  if (!resp.ok) throw new Error('update failed');
-  return await wrapJson(resp);
+  const json = await wrapJson(resp);
+  if (!resp.ok) {
+    throw new Error((json && (json.message || json.error)) ? (json.message || json.error) : 'update failed');
+  }
+  return json;
 }
 
 export async function deleteEntity(entity, id) {
@@ -153,7 +156,7 @@ export async function deleteEntity(entity, id) {
   });
   const json = await wrapJson(resp);
   if (!resp.ok) {
-    throw new Error((json && json.error) ? json.error : 'delete failed');
+    throw new Error((json && (json.message || json.error)) ? (json.message || json.error) : 'delete failed');
   }
   return json;
 }

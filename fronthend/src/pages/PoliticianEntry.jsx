@@ -25,6 +25,8 @@ const initialForm = {
   AutoAllow: 0,
 };
 
+const normalizeMobile = (value) => String(value ?? "").trim();
+
 // Utility: Generate Excel sample file
 const generateSampleExcel = (designationName) => {
   if (typeof window === 'undefined') return;
@@ -106,6 +108,8 @@ export default function PoliticianEntry() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedDesignation, setSelectedDesignation] = useState("");
+  const [selectedDesignationFilter, setSelectedDesignationFilter] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   
   // Bulk import state
@@ -140,6 +144,7 @@ export default function PoliticianEntry() {
       toast.success("जोड़ा गया!");
       setFormData(initialForm);
     },
+    onError: (error) => toast.error(error.message || "रिकॉर्ड जोड़ने में त्रुटि"),
   });
 
   const updateMutation = useMutation({
@@ -150,14 +155,21 @@ export default function PoliticianEntry() {
       setEditingId(null);
       setFormData(initialForm);
     },
+    onError: (error) => toast.error(error.message || "रिकॉर्ड सेव करने में त्रुटि"),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id) => Politician.delete(id),
-    onSuccess: () => {
+    onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: ['politicians'] });
+      if (String(editingId) === String(id)) {
+        setEditingId(null);
+        setFormData(initialForm);
+      }
+      setDeleteTarget(null);
       toast.success("हटा दिया गया");
     },
+    onError: (error) => toast.error(`रिकॉर्ड हटाने में त्रुटि: ${error.message}`),
   });
 
   const bulkDesignationMutation = useMutation({
@@ -218,6 +230,21 @@ export default function PoliticianEntry() {
     });
   }, [people, searchTerm]);
 
+  const designationCounts = useMemo(
+    () => types.map((type) => ({
+      ...type,
+      count: filtered.filter((person) => String(person.Designation) === String(type.id)).length,
+    })),
+    [filtered, types]
+  );
+
+  const listedPeople = selectedDesignationFilter === "all"
+    ? filtered
+    : filtered.filter((person) => String(person.Designation) === selectedDesignationFilter);
+  const selectedDesignationName = selectedDesignationFilter === "all"
+    ? "सभी पदाधिकारी"
+    : types.find((type) => String(type.id) === selectedDesignationFilter)?.Designation;
+
   const handleChange = (key, value) => {
     setFormData(prev => ({ ...prev, [key]: value }));
   };
@@ -225,7 +252,14 @@ export default function PoliticianEntry() {
   const validate = () => {
     if (!formData.Name?.trim()) { toast.error("नाम आवश्यक है"); return false; }
     if (!formData.Designation) { toast.error("पद चुनें"); return false; }
-    if (formData.Mobile && !/^\d{10}$/.test(formData.Mobile)) { toast.error("मोबाइल 10 अंकों का होना चाहिए"); return false; }
+    const mobile = normalizeMobile(formData.Mobile);
+    if (mobile && !/^\d{10}$/.test(mobile)) { toast.error("मोबाइल 10 अंकों का होना चाहिए"); return false; }
+    if (mobile && people.some((person) =>
+      normalizeMobile(person.Mobile) === mobile && String(person.id) !== String(editingId)
+    )) {
+      toast.error("यह मोबाइल नंबर पहले से दर्ज है");
+      return false;
+    }
     return true;
   };
 
@@ -233,6 +267,7 @@ export default function PoliticianEntry() {
     if (!validate()) return;
     const payload = { ...formData };
     payload.Area = formData.Area ? 1 : 0;
+    payload.Mobile = normalizeMobile(formData.Mobile);
     if (editingId) {
       updateMutation.mutate({ id: editingId, data: payload });
     } else {
@@ -282,10 +317,15 @@ export default function PoliticianEntry() {
       setBulkValidated(validated);
       
       // Check for duplicates
-      const duplicates = validated.filter(row => people.some(p => p.Mobile === row.Mobile));
-      if (duplicates.length > 0) {
-        setBulkConflicts(duplicates);
-      }
+      const seenMobiles = new Set(people.map((person) => normalizeMobile(person.Mobile)));
+      const duplicates = validated.filter((row) => {
+        const mobile = normalizeMobile(row.Mobile);
+        if (!mobile) return false;
+        if (seenMobiles.has(mobile)) return true;
+        seenMobiles.add(mobile);
+        return false;
+      });
+      setBulkConflicts(duplicates);
       
       toast.success(`${parsed.length} रिकॉर्ड लोड किए गए - ${duplicates.length} डुप्लिकेट मिले`);
     } catch (err) {
@@ -302,6 +342,7 @@ export default function PoliticianEntry() {
     let successCount = 0;
     let skipCount = 0;
     let errorCount = 0;
+    const importedMobiles = new Set(people.map((person) => normalizeMobile(person.Mobile)));
     
     for (const row of bulkValidated) {
       // Skip error rows
@@ -311,7 +352,8 @@ export default function PoliticianEntry() {
       }
       
       // Skip if duplicate and skipDuplicates is true
-      if (skipDuplicates && people.some(p => p.Mobile === row.Mobile)) {
+      const mobile = normalizeMobile(row.Mobile);
+      if (skipDuplicates && importedMobiles.has(mobile)) {
         skipCount++;
         continue;
       }
@@ -332,6 +374,7 @@ export default function PoliticianEntry() {
         };
         
         await Politician.create(payload);
+        importedMobiles.add(mobile);
         successCount++;
       } catch (err) {
         console.error("Insert error:", err);
@@ -354,7 +397,7 @@ export default function PoliticianEntry() {
     toast.success(`जोड़े गए: ${successCount}, छोड़े गए: ${skipCount}, त्रुटि: ${errorCount}`);
   };
 
-  const onDelete = (row) => deleteMutation.mutate(row.id);
+  const onDelete = (row) => setDeleteTarget(row);
 
   return (
     <div className="p-4 md:p-8 bg-gradient-to-br from-orange-50 via-white to-amber-50 min-h-screen">
@@ -418,14 +461,14 @@ export default function PoliticianEntry() {
                   <div className="bg-orange-50 border border-orange-300 rounded p-4">
                     <div className="flex items-center gap-2 text-orange-700 font-semibold mb-2">
                       <AlertTriangle className="w-4 h-4" />
-                      डुप्लिकेट मोबाइल नंबर मिले (डेटाबेस में पहले से मौजूद):
+                      डुप्लिकेट मोबाइल नंबर मिले:
                     </div>
                     <div className="text-sm text-orange-600 space-y-1">
                       {bulkConflicts.map((dup, idx) => (
                         <div key={idx}>{dup.Mobile} - {dup.Name}</div>
                       ))}
                     </div>
-                    <p className="text-xs text-orange-600 mt-3">नई रिकॉर्ड के लिए केवल नई मोबाइल संख्या जोड़ी जाएगी। डुप्लिकेट को अपडेट नहीं किया जाएगा।</p>
+                    <p className="text-xs text-orange-600 mt-3">एक ही मोबाइल नंबर वाली रिकॉर्ड आयात नहीं होगी।</p>
                   </div>
                 )}
 
@@ -442,7 +485,7 @@ export default function PoliticianEntry() {
                     </thead>
                     <tbody>
                       {bulkValidated.map((row, idx) => {
-                        const hasDuplicate = bulkConflicts?.some(d => d.Mobile === row.Mobile);
+                          const hasDuplicate = bulkConflicts?.some(d => normalizeMobile(d.Mobile) === normalizeMobile(row.Mobile));
                         const hasError = row._errors.length > 0;
                         const isOk = !hasError && !hasDuplicate;
                         
@@ -565,7 +608,11 @@ export default function PoliticianEntry() {
                 <Save className="w-4 h-4" /> सेव
               </Button>
               {editingId && (
-                <Button variant="outline" className="gap-2 text-red-600 hover:text-red-700" onClick={() => deleteMutation.mutate(editingId)}>
+                <Button
+                  variant="outline"
+                  className="gap-2 text-red-600 hover:text-red-700"
+                  onClick={() => setDeleteTarget(people.find((person) => String(person.id) === String(editingId)) || { id: editingId, Name: formData.Name })}
+                >
                   <Trash2 className="w-4 h-4" /> हटाएं
                 </Button>
               )}
@@ -575,7 +622,7 @@ export default function PoliticianEntry() {
 
         <Card className="border-orange-100 shadow-lg">
           <CardHeader className="bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100">
-            <CardTitle className="text-xl font-bold text-gray-900">रिकॉर्ड सूची ({filtered.length})</CardTitle>
+            <CardTitle className="text-xl font-bold text-gray-900">पद तथा दायित्व</CardTitle>
           </CardHeader>
           <CardContent className="p-6 overflow-auto">
             {selectedIds.length > 0 && (
@@ -627,16 +674,53 @@ export default function PoliticianEntry() {
               <p className="text-center text-gray-500 py-8">लोड हो रहा है...</p>
             ) : filtered.length === 0 ? (
               <p className="text-center text-gray-500 py-8">कोई रिकॉर्ड नहीं</p>
+            ) : selectedDesignationFilter === null ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {designationCounts.map((type) => (
+                  <Button
+                    key={type.id}
+                    type="button"
+                    variant="outline"
+                    className="h-auto min-h-16 justify-between whitespace-normal p-4 text-left"
+                    onClick={() => setSelectedDesignationFilter(String(type.id))}
+                    disabled={type.count === 0}
+                  >
+                    <span className="font-semibold text-gray-800">{type.Designation}</span>
+                    <span className="ml-3 rounded-full bg-orange-100 px-3 py-1 text-base font-bold text-orange-700">{type.count}</span>
+                  </Button>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-auto min-h-16 justify-between whitespace-normal border-orange-300 bg-orange-50 p-4 text-left"
+                  onClick={() => setSelectedDesignationFilter("all")}
+                >
+                  <span className="font-semibold text-gray-900">सभी पदाधिकारी</span>
+                  <span className="ml-3 rounded-full bg-orange-200 px-3 py-1 text-base font-bold text-orange-800">{filtered.length}</span>
+                </Button>
+              </div>
             ) : (
+              <>
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <Button type="button" variant="outline" onClick={() => setSelectedDesignationFilter(null)}>
+                  ← पद सूची पर वापस जाएं
+                </Button>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {selectedDesignationName} ({listedPeople.length})
+                </h3>
+              </div>
+              {listedPeople.length === 0 ? (
+                <p className="text-center text-gray-500 py-8">कोई रिकॉर्ड नहीं</p>
+              ) : (
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="text-left border-b">
                     <th className="py-2 px-2">
                       <Checkbox
                         aria-label="दिखाए गए सभी रिकॉर्ड चुनें"
-                        checked={filtered.length > 0 && filtered.every((row) => selectedIds.includes(row.id))}
+                        checked={listedPeople.length > 0 && listedPeople.every((row) => selectedIds.includes(row.id))}
                         onCheckedChange={(checked) => {
-                          const visibleIds = filtered.map((row) => row.id);
+                          const visibleIds = listedPeople.map((row) => row.id);
                           setSelectedIds((current) => checked
                             ? [...new Set([...current, ...visibleIds])]
                             : current.filter((id) => !visibleIds.includes(id)));
@@ -653,7 +737,7 @@ export default function PoliticianEntry() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(row => (
+                  {listedPeople.map(row => (
                     <tr key={row.id} className="border-b hover:bg-orange-50">
                       <td className="py-2 px-2">
                         <Checkbox
@@ -671,12 +755,26 @@ export default function PoliticianEntry() {
                       <td className="py-2 px-2">{row.Area ? 'ग्रामीण' : 'नगरीय'}</td>
                       <td className="py-2 px-2">{row.Village_City}</td>
                       <td className="py-2 px-2">
-                        <Button size="sm" variant="outline" onClick={() => onEdit(row)}>संपादित</Button>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => onEdit(row)}>संपादित</Button>
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            aria-label={`${row.Name || "रिकॉर्ड"} हटाएं`}
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => onDelete(row)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              )}
+              </>
             )}
           </CardContent>
         </Card>
@@ -694,6 +792,26 @@ export default function PoliticianEntry() {
               <AlertDialogAction
                 className="bg-red-600 hover:bg-red-700"
                 onClick={() => bulkDeleteMutation.mutate(selectedIds)}
+              >
+                हटाएं
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>रिकॉर्ड हटाएं?</AlertDialogTitle>
+              <AlertDialogDescription>
+                क्या आप &quot;{deleteTarget?.Name}&quot; का रिकॉर्ड हटाना चाहते हैं? यह कार्रवाई पूर्ववत नहीं की जा सकती।
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>रद्द करें</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700"
+                disabled={deleteMutation.isPending}
+                onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               >
                 हटाएं
               </AlertDialogAction>

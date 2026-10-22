@@ -8,8 +8,17 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Politician, PoliticianType, Mandal } from "@/api/entities";
 import { sendWhatsAppMessage, logWhatsAppSend } from "@/api/functions";
 import { toast } from "sonner";
-import { AlertTriangle, Copy, Info } from "lucide-react";
+import { AlertTriangle, Copy, Info, X } from "lucide-react";
 import restClient from "@/api/restClient";
+
+const isUtilityApi = (apiUrl) => {
+  try {
+    const url = new URL(apiUrl, 'http://localhost');
+    return url.pathname.toLowerCase().includes("sendmsgutil") || url.searchParams.has("htype");
+  } catch {
+    return /sendmsgutil|[?&]htype=/i.test(apiUrl);
+  }
+};
 
 const replaceVars = (text, person, designationText, mandalName) => {
   let msg = text || "";
@@ -50,6 +59,11 @@ export default function WhatsAppBulk() {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [previewUrls, setPreviewUrls] = useState(null); // ✅ NEW: Preview popup state
+  const [imageUrl, setImageUrl] = useState("");
+  const [imageName, setImageName] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const apiTemplate = appSettings?.whatsapp_text_api_url || "";
+  const utilityApi = isUtilityApi(apiTemplate);
 
   const filtered = useMemo(() => {
     let list = people;
@@ -71,9 +85,47 @@ export default function WhatsAppBulk() {
     setSelectedMandals(prev => checked ? [...prev, id] : prev.filter(x => x !== id));
   };
 
+  const handleImageSelect = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/gif"].includes(file.type)) {
+      toast.error("कृपया इमेज फ़ाइल चुनें");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("इमेज का आकार 10 MB से कम होना चाहिए");
+      return;
+    }
+
+    const uploadData = new FormData();
+    uploadData.append("file", file);
+    setUploadingImage(true);
+    try {
+      const response = await restClient.uploadFile(uploadData);
+      const uploadedPath = response?.file_url || response?.url || response?.data?.file_url || response?.data?.url;
+      if (!uploadedPath) throw new Error("अपलोड की गई इमेज का लिंक नहीं मिला");
+      setImageUrl(new URL(uploadedPath, window.location.origin).toString());
+      setImageName(file.name);
+      toast.success("इमेज अपलोड हुई");
+    } catch (error) {
+      toast.error(`इमेज अपलोड नहीं हुई: ${error.message}`);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const onSend = async () => {
     if (!filtered.length) { toast.error("कृपया मण्‍डल/पद चुनें"); return; }
     if (!message.trim()) { toast.error("कृपया संदेश लिखें"); return; }
+    if (!apiTemplate) {
+      toast.error("कृपया WhatsApp सेटिंग्स में Bulk API URL कॉन्फ़िगर करें");
+      return;
+    }
+    if (utilityApi && !imageUrl) {
+      toast.error("UTILITY API के लिए पहले इमेज चुनें");
+      return;
+    }
     
     // ✅ NEW: Build URLs and show preview popup first
     const urls = [];
@@ -82,7 +134,7 @@ export default function WhatsAppBulk() {
       const desigText = types.find(t => t.id === person.Designation)?.Designation || '';
       const mandalName = mandals.find(m => m.id === person.Mandal)?.name || '';
       const finalMsg = replaceVars(message, person, desigText, mandalName);
-      let apiUrl = appSettings?.whatsapp_text_api_url || '';
+      let apiUrl = apiTemplate;
       
       // ✅ CRITICAL FIX: Set correct parameters FIRST, then replace placeholders
       try {
@@ -92,6 +144,15 @@ export default function WhatsAppBulk() {
         
         // Remove any existing params to avoid duplicates
         urlObj.searchParams.delete('params');
+        if (utilityApi) {
+          urlObj.searchParams.set('htype', 'image');
+          urlObj.searchParams.set('fname', imageName || 'WhatsApp-Image');
+          urlObj.searchParams.set('url', imageUrl);
+        } else {
+          urlObj.searchParams.delete('htype');
+          urlObj.searchParams.delete('fname');
+          urlObj.searchParams.delete('url');
+        }
 
         // Manually build params to avoid + symbols for spaces
         // Replace spaces with %20 and keep Hindi text as-is
@@ -105,10 +166,15 @@ export default function WhatsAppBulk() {
           : `${urlString}?params=${paramsValue}`;
         
         apiUrl = finalUrl;
-      } catch (e) {
+      } catch {
         // Fallback: manual parameter addition
         apiUrl += (apiUrl.includes('?') ? '&' : '?') + `phone=${person.Mobile || ''}`;
         apiUrl += (apiUrl.includes('?') ? '&' : '?') + 'text=team_neena_verma9';
+        if (utilityApi) {
+          apiUrl += (apiUrl.includes('?') ? '&' : '?') + 'htype=image';
+          apiUrl += (apiUrl.includes('?') ? '&' : '?') + `fname=${encodeURIComponent(imageName || 'WhatsApp-Image')}`;
+          apiUrl += (apiUrl.includes('?') ? '&' : '?') + `url=${encodeURIComponent(imageUrl)}`;
+        }
         
         // Use %20 for spaces instead of + symbol
         const paramsNameEncoded = (person.Name || '').replace(/ /g, '%20');
@@ -123,6 +189,7 @@ export default function WhatsAppBulk() {
       // Don't encode Message and SenderName - let them stay as plain text with %20 spaces
       apiUrl = apiUrl.replace(/\{\{Message\}\}/g, finalMsg.replace(/ /g, '%20'));
       apiUrl = apiUrl.replace(/\{\{SenderName\}\}/g, (person.Name || '').replace(/ /g, '%20'));
+      apiUrl = apiUrl.replace(/\{\{ImageUrl\}\}/g, encodeURIComponent(imageUrl));
       
       urls.push({
         person: person,
@@ -130,6 +197,8 @@ export default function WhatsAppBulk() {
         mobile: person.Mobile,
         url: apiUrl,
         finalMsg: finalMsg,
+        imageUrl: utilityApi ? imageUrl : "",
+        utilityApi,
         desigText: desigText,
         mandalName: mandalName
       });
@@ -226,8 +295,36 @@ export default function WhatsAppBulk() {
           </CardHeader>
           <CardContent className="p-6 space-y-3">
             <Input placeholder="संदेश लिखें (उदाहरण: {{Name}} जी, {{Designation}} - {{Mandal}})" value={message} onChange={(e) => setMessage(e.target.value)} />
+            <div className="space-y-2 rounded-lg border border-orange-100 bg-white p-4">
+              <label htmlFor="whatsapp-bulk-image" className="block font-medium text-gray-800">
+                संदेश के साथ इमेज
+              </label>
+              <Input
+                id="whatsapp-bulk-image"
+                type="file"
+                accept="image/jpeg,image/png,image/gif"
+                onChange={handleImageSelect}
+                disabled={uploadingImage || sending}
+              />
+              {uploadingImage && <p className="text-sm text-gray-500">इमेज अपलोड हो रही है...</p>}
+              {imageUrl && (
+                <div className="flex items-center gap-3">
+                  <img src={imageUrl} alt="संदेश के साथ भेजी जाने वाली इमेज" className="h-16 w-16 rounded border object-cover" />
+                  <span className="min-w-0 flex-1 truncate text-sm text-gray-700">{imageName}</span>
+                  <Button type="button" variant="outline" size="icon" aria-label="इमेज हटाएं" onClick={() => { setImageUrl(""); setImageName(""); }}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+              <p className="text-xs text-gray-600">
+                {utilityApi
+                  ? "चुनी गई इमेज UTILITY API के साथ संदेश में भेजी जाएगी।"
+                  : "MARKETING API केवल टेक्स्ट भेजेगी; इमेज संलग्न नहीं होगी।"}
+                {" "}अधिकतम आकार 10 MB।
+              </p>
+            </div>
             <div className="flex gap-3">
-              <Button className="gap-2" disabled={sending} onClick={onSend}>📤 Send Message</Button>
+              <Button className="gap-2" disabled={sending || uploadingImage} onClick={onSend}>📤 Send Message</Button>
               <Button variant="outline" onClick={() => { setSelectedTypes([]); setMessage(""); }}>🔄 Refresh</Button>
             </div>
           </CardContent>
@@ -359,6 +456,12 @@ export default function WhatsAppBulk() {
                   <p className="text-xs text-gray-600 mb-1 font-semibold">📝 संदेश:</p>
                   <p className="text-xs text-gray-800 whitespace-pre-wrap break-words">{item.finalMsg}</p>
                 </div>
+                {item.utilityApi && item.imageUrl && (
+                  <div className="flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-2">
+                    <img src={item.imageUrl} alt="संदेश इमेज" className="h-12 w-12 rounded border object-cover" />
+                    <span className="truncate text-xs text-blue-800">{imageName} — UTILITY इमेज</span>
+                  </div>
+                )}
                 
                 {/* Full URL */}
                 <div className="bg-gray-900 border border-gray-700 rounded p-2 overflow-x-auto">

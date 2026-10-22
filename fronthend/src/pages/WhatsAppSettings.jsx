@@ -21,6 +21,7 @@ const PLACEHOLDERS = [
   { key: "{{Village}}", desc: "गाँव" },
   { key: "{{District}}", desc: "जिला" },
   { key: "{{Sn}}", desc: "निमंत्रण संख्या" },
+  { key: "{{ImageUrl}}", desc: "Bulk Utility इमेज लिंक" },
 ];
 
 export default function WhatsAppSettings() {
@@ -384,9 +385,9 @@ export default function WhatsAppSettings() {
             <Card className="border-green-100 shadow-lg">
               <CardHeader className="bg-gradient-to-r from-green-50 to-emerald-50 border-b border-green-100">
                 <CardTitle className="text-xl font-bold text-gray-900">
-                  💬 TEXT API कॉन्फ़िगरेशन (TEXT Template)
+                  💬 Bulk WhatsApp API कॉन्फ़िगरेशन
                 </CardTitle>
-                <p className="text-sm text-gray-600 mt-1">बल्क टेक्स्ट मैसेज भेजने के लिए (जन्मदिन/वर्षगांठ बधाई)</p>
+                <p className="text-sm text-gray-600 mt-1">WhatsApp Bulk और जन्मदिन/वर्षगांठ संदेशों के लिए API सेट करें</p>
               </CardHeader>
               <CardContent className="p-6 space-y-6">
                 <div className="flex items-center gap-2">
@@ -416,20 +417,22 @@ export default function WhatsAppSettings() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>TEXT API URL टेम्पलेट</Label>
+                      <Label>Bulk API URL टेम्पलेट</Label>
                       <Textarea
                         value={formData.whatsapp_text_api_url}
                         onChange={(e) => setFormData({...formData, whatsapp_text_api_url: e.target.value})}
-                        placeholder="https://bhashsms.com/api/sendmsg.php?user=XXX&pass=XXX&sender=XXX&phone={{Mob}}&text={{Message}}&template_id=XXX"
+                        placeholder="Marketing: https://bhashsms.com/api/sendmsg.php?... | Utility: https://bhashsms.com/api/sendmsgutil.php?..."
                         rows={3}
                         className="font-mono text-sm"
                       />
                       <div className="bg-green-50 border border-green-200 rounded-lg p-3 mt-2">
                         <p className="text-sm font-semibold text-green-800 mb-1">📌 TEXT API नोट:</p>
                         <ul className="text-xs text-green-700 space-y-1 list-disc list-inside">
-                          <li>यह API TEXT template (बिना PDF) के साथ message भेजता है</li>
-                          <li>PDF parameters (<code className="bg-green-100 px-1">htype, url, fname</code>) की जरूरत नहीं</li>
-                          <li>Birthday/Anniversary wishes के लिए उपयोग होगा</li>
+                          <li><code className="bg-green-100 px-1">sendmsg.php</code> Marketing API केवल टेक्स्ट भेजेगी।</li>
+                          <li><code className="bg-green-100 px-1">sendmsgutil.php</code> Utility API चुनने पर WhatsApp Bulk में अपलोड की गई इमेज संदेश के साथ जाएगी।</li>
+                          <li>Utility API पर इमेज के लिए <code className="bg-green-100 px-1">htype=image</code> और <code className="bg-green-100 px-1">url</code> अपने-आप जोड़े जाएंगे।</li>
+                          <li><code className="bg-green-100 px-1">{"{{ImageUrl}}"}</code> प्लेसहोल्डर भी उपलब्ध है।</li>
+                          <li>इमेज अधिकतम 10 MB की JPG, PNG या GIF होनी चाहिए।</li>
                         </ul>
                       </div>
                     </div>

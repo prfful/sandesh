@@ -562,6 +562,20 @@ app.post('/api/entities/:entity', async (req, res) => {
   try {
     console.log(`\n=== CREATE ${table} ===`);
 
+    if (table === 'politician' && String(payload.Mobile ?? '').trim()) {
+      const mobile = String(payload.Mobile).trim();
+      const [existingRows] = await pool.query(
+        'SELECT id FROM politician WHERE TRIM(Mobile) = ? LIMIT 1',
+        [mobile]
+      );
+      if (existingRows.length) {
+        return res.status(409).json({
+          error: 'duplicate_mobile',
+          message: 'यह मोबाइल नंबर पहले से दर्ज है',
+        });
+      }
+    }
+
     // CRITICAL: Remove blank id values FIRST before any other processing
     if (payload.id === '' || payload.id === null || payload.id === undefined) {
       console.log(`[CRITICAL] Removing blank/null id from ${table} create payload`);
@@ -686,6 +700,20 @@ app.put('/api/entities/:entity/:id', async (req, res) => {
     console.log('ID:', req.params.id);
     console.log('Payload columns:', Object.keys(payload));
 
+    if (table === 'politician' && Object.prototype.hasOwnProperty.call(payload, 'Mobile') && String(payload.Mobile ?? '').trim()) {
+      const mobile = String(payload.Mobile).trim();
+      const [existingRows] = await pool.query(
+        'SELECT id FROM politician WHERE TRIM(Mobile) = ? AND id <> ? LIMIT 1',
+        [mobile, req.params.id]
+      );
+      if (existingRows.length) {
+        return res.status(409).json({
+          error: 'duplicate_mobile',
+          message: 'यह मोबाइल नंबर पहले से दर्ज है',
+        });
+      }
+    }
+
     const allowedColumns = await getTableColumns(table);
     if (!allowedColumns.length) {
       return res.status(500).json({ error: 'table_columns_not_loaded', message: `Could not load columns for table ${table}` });
@@ -774,7 +802,9 @@ app.delete('/api/entities/:entity/:id', async (req, res) => {
   if (!table) return res.status(400).json({ error: 'unsupported_entity' });
   try {
     console.log(`[DELETE ${table}] Attempting to delete with id: "${req.params.id}"`);
-    const [result] = await pool.query('DELETE FROM ?? WHERE id = ? OR Sn = ?', [table, req.params.id, req.params.id]);
+    const [result] = table === 'pragram'
+      ? await pool.query('DELETE FROM ?? WHERE id = ? OR Sn = ?', [table, req.params.id, req.params.id])
+      : await pool.query('DELETE FROM ?? WHERE id = ?', [table, req.params.id]);
     console.log(`[DELETE ${table}] Result:`, { affectedRows: result.affectedRows });
     if (result.affectedRows === 0) {
       console.warn(`[DELETE ${table}] Record not found for id: "${req.params.id}"`);

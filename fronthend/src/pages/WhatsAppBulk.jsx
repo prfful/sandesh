@@ -66,17 +66,22 @@ export default function WhatsAppBulk() {
   const utilityApi = isUtilityApi(apiTemplate);
 
   const filtered = useMemo(() => {
+    const hasSelection = selectedMandals.length > 0 || selectedTypes.length > 0;
+    if (!hasSelection) return [];
+
+    const filterByMandals = selectedMandals.length > 0 && selectedMandals.length < mandals.length;
+    const filterByTypes = selectedTypes.length > 0 && selectedTypes.length < types.length;
     let list = people;
-    if (selectedMandals.length) {
+    if (filterByMandals) {
       const mids = new Set(selectedMandals.map(Number));
       list = list.filter(p => mids.has(Number(p.Mandal)));
     }
-    if (selectedTypes.length) {
+    if (filterByTypes) {
       const tids = new Set(selectedTypes.map(Number));
       list = list.filter(p => tids.has(Number(p.Designation)));
     }
     return list;
-  }, [people, selectedMandals, selectedTypes]);
+  }, [people, selectedMandals, selectedTypes, mandals.length, types.length]);
 
   const toggleType = (id, checked) => {
     setSelectedTypes(prev => checked ? [...prev, id] : prev.filter(x => x !== id));
@@ -335,6 +340,11 @@ export default function WhatsAppBulk() {
             <CardTitle className="text-xl font-bold text-gray-900">रिकॉर्ड ({filtered.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-6 overflow-auto">
+            {filtered.length === 0 ? (
+              <p className="py-8 text-center text-gray-500">
+                पद या मण्‍डल चुनें। सभी कार्यकर्ता देखने के लिए “Select All” चुनें।
+              </p>
+            ) : (
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left border-b">
@@ -361,6 +371,7 @@ export default function WhatsAppBulk() {
                 ))}
               </tbody>
             </table>
+            )}
           </CardContent>
         </Card>
 

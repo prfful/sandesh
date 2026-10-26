@@ -1316,6 +1316,26 @@ app.post('/api/functions/sendWhatsAppMessage', async (req, res) => {
 
     // Build API URL - if preview URL is provided from UI, send that exact URL.
     let apiUrl = (providedApiUrl || '').trim();
+    const configuredTemplateName = String(appSettings.whatsapp_text_template_name || '').trim();
+    const configuredUrlTemplate = (() => {
+      try {
+        return new URL(appSettings.whatsapp_text_api_url).searchParams.get('text') || '';
+      } catch {
+        return '';
+      }
+    })();
+    const textTemplateName = configuredTemplateName
+      || (configuredUrlTemplate.includes('{{') ? '' : configuredUrlTemplate.trim());
+
+    if (apiUrl && textTemplateName) {
+      const requestUrl = new URL(apiUrl);
+      [...requestUrl.searchParams.keys()]
+        .filter((key) => key.toLowerCase() === 'text')
+        .forEach((key) => requestUrl.searchParams.delete(key));
+      requestUrl.searchParams.set('text', textTemplateName);
+      apiUrl = requestUrl.toString();
+    }
+
     if (!apiUrl) {
       // Clean phone number - remove any non-digit characters
       let cleanPhone = (phone || '').replace(/\D/g, '');
@@ -1347,8 +1367,8 @@ app.post('/api/functions/sendWhatsAppMessage', async (req, res) => {
         urlObj.searchParams.delete('url');
         urlObj.searchParams.delete('fname');
         urlObj.searchParams.delete('htype');
-        // Force text to template name (not message)
-        urlObj.searchParams.set('text', 'team_neena_verma9');
+        // Use the configured provider template, not a hard-coded account-specific value.
+        if (textTemplateName) urlObj.searchParams.set('text', textTemplateName);
         // Remove legacy text-from-message fields if they exist
         urlObj.searchParams.delete('template_id');
 
@@ -1374,9 +1394,9 @@ app.post('/api/functions/sendWhatsAppMessage', async (req, res) => {
 
         // Force text and params directly (replace any old message text)
         if (/([?&])text=/.test(apiUrl)) {
-          apiUrl = apiUrl.replace(/text=[^&]*/i, 'text=team_neena_verma9');
+          apiUrl = apiUrl.replace(/text=[^&]*/i, `text=${encodeURIComponent(textTemplateName || 'team_neena_verma9')}`);
         } else {
-          apiUrl += (apiUrl.includes('?') ? '&' : '?') + 'text=team_neena_verma9';
+          apiUrl += (apiUrl.includes('?') ? '&' : '?') + `text=${encodeURIComponent(textTemplateName || 'team_neena_verma9')}`;
         }
         
         // Use %20 for spaces instead of + symbol
@@ -1432,7 +1452,14 @@ app.post('/api/functions/sendWhatsAppMessage', async (req, res) => {
     // Map HTTP status codes to user-friendly messages
     let statusMessage = '';
     const trimmedBhashResponse = (responseText || '').trim();
-    if (response.ok) {
+    const gatewayStatus = String(responseData?.status || '').toLowerCase();
+    const gatewayRejected = /^F(?:\.|\b)/i.test(trimmedBhashResponse)
+      || responseData?.success === false
+      || responseData?.success === 0
+      || ['failed', 'failure', 'error', 'rejected'].includes(gatewayStatus);
+    if (response.ok && gatewayRejected) {
+      statusMessage = `BhashSMS ने अनुरोध अस्वीकार किया: ${trimmedBhashResponse}`;
+    } else if (response.ok) {
       if (/^S\.\d+$/i.test(trimmedBhashResponse)) {
         statusMessage = 'गेटवे ने अनुरोध स्वीकार किया (Queued)। अंतिम डिलीवरी प्रदाता पर निर्भर है।';
       } else {
@@ -1455,12 +1482,14 @@ app.post('/api/functions/sendWhatsAppMessage', async (req, res) => {
     }
 
     return res.json({ 
-      success: response.ok, 
+      success: response.ok && !gatewayRejected,
       data: responseData, 
       statusCode: response.status,
       statusMessage: statusMessage,
       bhashResponse: responseText,
       queued: /^S\.\d+$/i.test(trimmedBhashResponse),
+      gatewayRejected,
+      templateNameUsed: textTemplateName || undefined,
       timestamp: new Date().toISOString()
     });
   } catch (err) {

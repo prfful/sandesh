@@ -429,7 +429,7 @@ export default function WhatsAppSettings() {
                         <p className="text-sm font-semibold text-green-800 mb-1">📌 TEXT API नोट:</p>
                         <ul className="text-xs text-green-700 space-y-1 list-disc list-inside">
                           <li><code className="bg-green-100 px-1">sendmsg.php</code> Marketing API केवल टेक्स्ट भेजेगी।</li>
-                          <li><code className="bg-green-100 px-1">sendmsgutil.php</code> Utility API चुनने पर WhatsApp Bulk में अपलोड की गई इमेज संदेश के साथ जाएगी।</li>
+                          <li>WhatsApp Bulk में Utility चुनने पर <code className="bg-green-100 px-1">sendmsgutil.php</code> endpoint इस्तेमाल होगा; अपलोड की गई इमेज संदेश के साथ जाएगी।</li>
                           <li>Utility API पर इमेज के लिए <code className="bg-green-100 px-1">htype=image</code> और <code className="bg-green-100 px-1">url</code> अपने-आप जोड़े जाएंगे।</li>
                           <li><code className="bg-green-100 px-1">{"{{ImageUrl}}"}</code> प्लेसहोल्डर भी उपलब्ध है।</li>
                           <li>इमेज अधिकतम 10 MB की JPG, PNG या GIF होनी चाहिए।</li>
@@ -470,10 +470,14 @@ export default function WhatsAppSettings() {
                       </div>
                     </div>
 
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                      <p className="text-xs font-semibold text-amber-900 mb-1">नमूना TEXT API:</p>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                      <p className="text-xs font-semibold text-amber-900">नमूना Marketing API (केवल टेक्स्ट):</p>
                       <code className="text-xs text-amber-800 block break-all">
-                        https://bhashsms.com/api/sendmsg.php?user=dharfc_bwa&pass=XXX&sender=BUZWAP&phone={"{{Mob}}"}&text={"{{Message}}"}&template_id=team_neenavverma_01
+                        https://bhashsms.com/api/sendmsg.php?user=XXX&pass=XXX&sender=BUZWAP&phone={"{{Mob}}"}&text=team_template&Params={"{{Name}}"},{"{{Message}}"}&priority=wa&stype=normal
+                      </code>
+                      <p className="text-xs font-semibold text-amber-900">नमूना Utility API (टेक्स्ट + इमेज):</p>
+                      <code className="text-xs text-amber-800 block break-all">
+                        https://bhashsms.com/api/sendmsgutil.php?user=XXX&pass=XXX&sender=BUZWAP&phone={"{{Mob}}"}&text=team_template&Params={"{{Name}}"},{"{{Message}}"}&priority=wa&stype=normal&htype=image&fname=Image.jpg&url={"{{ImageUrl}}"}
                       </code>
                     </div>
                   </>

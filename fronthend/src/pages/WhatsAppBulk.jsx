@@ -20,6 +20,142 @@ const isUtilityApi = (apiUrl) => {
   }
 };
 
+const setQueryParameter = (searchParams, name, value) => {
+  const matchingKeys = [...searchParams.keys()].filter((key) => key.toLowerCase() === name.toLowerCase());
+  const key = matchingKeys[0] || name;
+  matchingKeys.forEach((matchingKey) => searchParams.delete(matchingKey));
+  searchParams.set(key, value);
+};
+
+const deleteQueryParameter = (searchParams, name) => {
+  [...searchParams.keys()]
+    .filter((key) => key.toLowerCase() === name.toLowerCase())
+    .forEach((key) => searchParams.delete(key));
+};
+
+const setCanonicalQueryParameter = (searchParams, name, value) => {
+  deleteQueryParameter(searchParams, name);
+  searchParams.set(name, value);
+};
+
+const normalizeImageFilename = (filename, mimeType) => {
+  const extensionByMimeType = {
+    "image/jpeg": ".jpeg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+  };
+  const expectedExtension = extensionByMimeType[mimeType];
+  const safeBaseName = (filename || "WhatsApp-Image")
+    .replace(/\.[^.]*$/, "")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .trim() || "WhatsApp-Image";
+  const supportedExtension = /\.(jpe?g|png|gif)$/i.test(filename || "");
+  return supportedExtension ? filename.replace(/[\\/:*?"<>|]/g, "-") : `${safeBaseName}${expectedExtension}`;
+};
+
+const isPlaceholderImageUrl = (imageUrl) => {
+  try {
+    const hostname = new URL(imageUrl).hostname.toLowerCase();
+    return hostname === "your-site"
+      || hostname === "localhost"
+      || hostname === "127.0.0.1"
+      || /^example\.(com|net|org)$/.test(hostname);
+  } catch {
+    return true;
+  }
+};
+
+const buildBulkApiUrl = ({ template, person, message, templateName, mode, imageUrl, imageName }) => {
+  const url = new URL(template);
+  if (url.hostname.toLowerCase() === "bhashsms.com" && url.protocol === "http:") {
+    url.protocol = "https:";
+  }
+  if (/\/sendmsg(?:util)?\.php$/i.test(url.pathname)) {
+    url.pathname = url.pathname.replace(/sendmsg(?:util)?\.php$/i, mode === "utility" ? "sendmsgutil.php" : "sendmsg.php");
+  }
+
+  const existingText = url.searchParams.get("text");
+  const selectedTemplate = templateName.trim() || (existingText && !existingText.includes("{{") ? existingText : "team_neena_verma9");
+  setQueryParameter(url.searchParams, "phone", person.Mobile || "");
+  setQueryParameter(url.searchParams, "text", selectedTemplate);
+  setCanonicalQueryParameter(url.searchParams, "Params", `${person.Name || ""},${message}`);
+  deleteQueryParameter(url.searchParams, "template_id");
+
+  if (mode === "utility") {
+    setQueryParameter(url.searchParams, "htype", "image");
+    setQueryParameter(url.searchParams, "fname", imageName || "WhatsApp-Image");
+    setQueryParameter(url.searchParams, "url", imageUrl);
+  } else {
+    ["htype", "fname", "url"].forEach((name) => {
+      deleteQueryParameter(url.searchParams, name);
+    });
+  }
+
+  return { url: url.toString(), templateName: selectedTemplate };
+};
+
+const inspectBulkRequest = (item) => {
+  const requestUrl = new URL(item.url);
+  const paramKeys = [...requestUrl.searchParams.keys()].filter((key) => key.toLowerCase() === "params");
+  const imageUrl = requestUrl.searchParams.get("url") || "";
+  const extension = requestUrl.searchParams.get("fname")?.split(".").pop()?.toLowerCase() || "";
+  const validImageExtensions = ["jpg", "jpeg", "png", "gif"];
+  const diagnostics = {
+    recipient: item.mobile ? `***${String(item.mobile).slice(-4)}` : "missing",
+    mode: item.utilityApi,
+    endpoint: requestUrl.pathname,
+    textTemplate: requestUrl.searchParams.get("text") || "missing",
+    utilityEndpoint: requestUrl.pathname.toLowerCase().includes("sendmsgutil.php"),
+    paramsCount: paramKeys.length,
+    paramsKey: paramKeys[0] || "missing",
+    imageType: requestUrl.searchParams.get("htype") || "missing",
+    filename: requestUrl.searchParams.get("fname") || "missing",
+    supportedImageExtension: validImageExtensions.includes(extension),
+    imageUrlHost: imageUrl ? new URL(imageUrl).host : "missing",
+    httpsImageUrl: imageUrl.startsWith("https://"),
+    placeholderImageUrl: isPlaceholderImageUrl(imageUrl),
+  };
+
+  const safeUrl = new URL(item.url);
+  ["user", "pass", "password", "phone", "params"].forEach((key) => deleteQueryParameter(safeUrl.searchParams, key));
+  diagnostics.requestUrlWithoutCredentialsOrPersonalValues = safeUrl.toString();
+  diagnostics.valid = item.utilityApi === "utility"
+    ? diagnostics.utilityEndpoint
+      && diagnostics.paramsCount === 1
+      && diagnostics.imageType === "image"
+      && diagnostics.supportedImageExtension
+      && diagnostics.httpsImageUrl
+      && !diagnostics.placeholderImageUrl
+    : diagnostics.paramsCount === 1;
+
+  return diagnostics;
+};
+
+const getGatewayResponseSnippet = (response) => {
+  const responseText = typeof response === "string" ? response : JSON.stringify(response ?? "");
+  return responseText
+    .replace(/([?&](?:user|pass|password|phone)=)[^&\s]*/gi, "$1[redacted]")
+    .slice(0, 500);
+};
+
+const checkImageLoadsInBrowser = (imageUrl) => new Promise((resolve) => {
+  const image = new Image();
+  const timeout = window.setTimeout(() => {
+    image.src = "";
+    resolve({ loaded: false, reason: "timeout" });
+  }, 10000);
+
+  image.onload = () => {
+    window.clearTimeout(timeout);
+    resolve({ loaded: true, width: image.naturalWidth, height: image.naturalHeight });
+  };
+  image.onerror = () => {
+    window.clearTimeout(timeout);
+    resolve({ loaded: false, reason: "browser could not load the URL as an image" });
+  };
+  image.src = imageUrl;
+});
+
 const replaceVars = (text, person, designationText, mandalName) => {
   let msg = text || "";
   const pairs = {
@@ -62,8 +198,9 @@ export default function WhatsAppBulk() {
   const [imageUrl, setImageUrl] = useState("");
   const [imageName, setImageName] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [apiModeOverride, setApiModeOverride] = useState(null);
   const apiTemplate = appSettings?.whatsapp_text_api_url || "";
-  const utilityApi = isUtilityApi(apiTemplate);
+  const utilityApi = apiModeOverride || (isUtilityApi(apiTemplate) ? "utility" : "marketing");
 
   const filtered = useMemo(() => {
     const hasSelection = selectedMandals.length > 0 || selectedTypes.length > 0;
@@ -111,7 +248,7 @@ export default function WhatsAppBulk() {
       const uploadedPath = response?.file_url || response?.url || response?.data?.file_url || response?.data?.url;
       if (!uploadedPath) throw new Error("अपलोड की गई इमेज का लिंक नहीं मिला");
       setImageUrl(new URL(uploadedPath, window.location.origin).toString());
-      setImageName(file.name);
+      setImageName(normalizeImageFilename(file.name, file.type));
       toast.success("इमेज अपलोड हुई");
     } catch (error) {
       toast.error(`इमेज अपलोड नहीं हुई: ${error.message}`);
@@ -127,8 +264,16 @@ export default function WhatsAppBulk() {
       toast.error("कृपया WhatsApp सेटिंग्स में Bulk API URL कॉन्फ़िगर करें");
       return;
     }
-    if (utilityApi && !imageUrl) {
+    if (utilityApi === "utility" && !imageUrl) {
       toast.error("UTILITY API के लिए पहले इमेज चुनें");
+      return;
+    }
+    if (utilityApi === "utility" && isPlaceholderImageUrl(imageUrl)) {
+      toast.error("इमेज लिंक में असली वेबसाइट का पता नहीं है। अपलोड की गई इमेज का वास्तविक सार्वजनिक URL इस्तेमाल करें।");
+      return;
+    }
+    if (utilityApi === "marketing" && imageUrl) {
+      toast.error("MARKETING API केवल टेक्स्ट भेजती है। इमेज भेजने के लिए Utility चुनें, या अपलोड की गई इमेज हटाएं।");
       return;
     }
     
@@ -139,62 +284,22 @@ export default function WhatsAppBulk() {
       const desigText = types.find(t => t.id === person.Designation)?.Designation || '';
       const mandalName = mandals.find(m => m.id === person.Mandal)?.name || '';
       const finalMsg = replaceVars(message, person, desigText, mandalName);
-      let apiUrl = apiTemplate;
-      
-      // ✅ CRITICAL FIX: Set correct parameters FIRST, then replace placeholders
+      let apiUrl;
+      let selectedTemplate;
       try {
-        const urlObj = new URL(apiUrl);
-        urlObj.searchParams.set('phone', person.Mobile || '');
-        urlObj.searchParams.set('text', 'team_neena_verma9'); // Template name - FORCE this!
-        
-        // Remove any existing params to avoid duplicates
-        urlObj.searchParams.delete('params');
-        if (utilityApi) {
-          urlObj.searchParams.set('htype', 'image');
-          urlObj.searchParams.set('fname', imageName || 'WhatsApp-Image');
-          urlObj.searchParams.set('url', imageUrl);
-        } else {
-          urlObj.searchParams.delete('htype');
-          urlObj.searchParams.delete('fname');
-          urlObj.searchParams.delete('url');
-        }
-
-        // Manually build params to avoid + symbols for spaces
-        // Replace spaces with %20 and keep Hindi text as-is
-        const paramsNameEncoded = (person.Name || '').replace(/ /g, '%20');
-        const paramsMessageEncoded = finalMsg.replace(/ /g, '%20');
-        const paramsValue = `${paramsNameEncoded},${paramsMessageEncoded}`;
-        
-        const urlString = urlObj.toString();
-        const finalUrl = urlString.includes('?') 
-          ? `${urlString}&params=${paramsValue}`
-          : `${urlString}?params=${paramsValue}`;
-        
-        apiUrl = finalUrl;
-      } catch {
-        // Fallback: manual parameter addition
-        apiUrl += (apiUrl.includes('?') ? '&' : '?') + `phone=${person.Mobile || ''}`;
-        apiUrl += (apiUrl.includes('?') ? '&' : '?') + 'text=team_neena_verma9';
-        if (utilityApi) {
-          apiUrl += (apiUrl.includes('?') ? '&' : '?') + 'htype=image';
-          apiUrl += (apiUrl.includes('?') ? '&' : '?') + `fname=${encodeURIComponent(imageName || 'WhatsApp-Image')}`;
-          apiUrl += (apiUrl.includes('?') ? '&' : '?') + `url=${encodeURIComponent(imageUrl)}`;
-        }
-        
-        // Use %20 for spaces instead of + symbol
-        const paramsNameEncoded = (person.Name || '').replace(/ /g, '%20');
-        const paramsMessageEncoded = finalMsg.replace(/ /g, '%20');
-        const paramsValue = `${paramsNameEncoded},${paramsMessageEncoded}`;
-        
-        apiUrl += (apiUrl.includes('?') ? '&' : '?') + `params=${paramsValue}`;
+        ({ url: apiUrl, templateName: selectedTemplate } = buildBulkApiUrl({
+          template: apiTemplate,
+          person,
+          message: finalMsg,
+          templateName: appSettings?.whatsapp_text_template_name || "",
+          mode: utilityApi,
+          imageUrl,
+          imageName,
+        }));
+      } catch (error) {
+        toast.error(`Bulk API URL सही नहीं है: ${error.message}`);
+        return;
       }
-      
-      // Replace placeholders AFTER setting correct parameters (for legacy placeholder support)
-      apiUrl = apiUrl.replace(/\{\{Mob\}\}/g, person.Mobile || '');
-      // Don't encode Message and SenderName - let them stay as plain text with %20 spaces
-      apiUrl = apiUrl.replace(/\{\{Message\}\}/g, finalMsg.replace(/ /g, '%20'));
-      apiUrl = apiUrl.replace(/\{\{SenderName\}\}/g, (person.Name || '').replace(/ /g, '%20'));
-      apiUrl = apiUrl.replace(/\{\{ImageUrl\}\}/g, encodeURIComponent(imageUrl));
       
       urls.push({
         person: person,
@@ -202,13 +307,32 @@ export default function WhatsAppBulk() {
         mobile: person.Mobile,
         url: apiUrl,
         finalMsg: finalMsg,
-        imageUrl: utilityApi ? imageUrl : "",
+        imageUrl: utilityApi === "utility" ? imageUrl : "",
         utilityApi,
+        templateName: selectedTemplate,
         desigText: desigText,
         mandalName: mandalName
       });
     }
     
+    const diagnostics = urls.map(inspectBulkRequest);
+    console.groupCollapsed("[WhatsApp Bulk] Request checks");
+    console.table(diagnostics);
+    diagnostics.filter((item) => !item.valid).forEach((item) => console.warn("[WhatsApp Bulk] Request check failed:", item));
+    console.info("Credentials, full phone numbers, and Params values are omitted from these logs.");
+    console.groupEnd();
+
+    if (utilityApi === "utility") {
+      const imageCheck = await checkImageLoadsInBrowser(imageUrl);
+      if (imageCheck.loaded) {
+        console.info("[WhatsApp Bulk] Image URL loads in this browser:", imageCheck);
+      } else {
+        console.warn("[WhatsApp Bulk] Image URL did not load in this browser:", imageCheck);
+        toast.warning("ब्राउज़र इमेज URL नहीं खोल पाया। प्रिव्यू में इमेज लिंक खोलकर जाँचें।");
+      }
+      console.info("Browser image-load check does not guarantee that BhashSMS can access the URL.");
+    }
+
     // ✅ Show preview popup with URLs - User can review before sending
     setPreviewUrls(urls);
   };
@@ -218,6 +342,7 @@ export default function WhatsAppBulk() {
     
     setSending(true);
     let successCount = 0;
+    const failures = [];
     
     for (const item of previewUrls) {
       const person = item.person;
@@ -230,17 +355,46 @@ export default function WhatsAppBulk() {
           message: finalMsg,
           apiUrl: item.url,
         });
+        console.groupCollapsed(`[WhatsApp Bulk] Gateway response for ***${String(item.mobile || "").slice(-4)}`);
+        console.info({
+          success: resp?.success,
+          queued: resp?.queued,
+          statusCode: resp?.statusCode,
+          statusMessage: resp?.statusMessage,
+          templateNameUsed: resp?.templateNameUsed,
+          gatewayResponse: getGatewayResponseSnippet(resp?.bhashResponse || resp?.data?.rawResponse || resp?.data),
+          request: inspectBulkRequest(item),
+        });
+        console.groupEnd();
         const status = resp?.success ? 'success' : 'failed';
         await logWhatsAppSend({ person_id: person.id, type: 'bulk', message: finalMsg, status, response: JSON.stringify(resp || {}) });
         if (resp?.success) successCount++;
+        else failures.push({
+          name: person.Name,
+          message: resp?.statusMessage || resp?.error || resp?.bhashResponse || `HTTP ${resp?.statusCode || "unknown"}`,
+        });
       } catch (e) {
+        console.error("[WhatsApp Bulk] Send request failed:", {
+          recipient: `***${String(item.mobile || "").slice(-4)}`,
+          error: e.message,
+          request: inspectBulkRequest(item),
+        });
         await logWhatsAppSend({ person_id: person.id, type: 'bulk', message: finalMsg, status: 'failed', response: e.message });
+        failures.push({ name: person.Name, message: e.message });
       }
     }
     
     setSending(false);
     setPreviewUrls(null);
-    toast.success(`भेजा गया: ${successCount}/${previewUrls.length}`);
+    if (failures.length) {
+      const firstFailure = failures[0];
+      toast.error(
+        `भेजा गया: ${successCount}/${previewUrls.length}। विफल: ${firstFailure.name} — ${firstFailure.message}`,
+        { duration: 10000 }
+      );
+    } else {
+      toast.success(`गेटवे द्वारा स्वीकार किया गया: ${successCount}/${previewUrls.length}`);
+    }
   };
 
   return (
@@ -301,6 +455,31 @@ export default function WhatsAppBulk() {
           <CardContent className="p-6 space-y-3">
             <Input placeholder="संदेश लिखें (उदाहरण: {{Name}} जी, {{Designation}} - {{Mandal}})" value={message} onChange={(e) => setMessage(e.target.value)} />
             <div className="space-y-2 rounded-lg border border-orange-100 bg-white p-4">
+              <fieldset className="space-y-2">
+                <legend className="font-medium text-gray-800">Bulk संदेश प्रकार</legend>
+                <div className="flex flex-wrap gap-4 text-sm">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="bulk-api-mode"
+                      value="marketing"
+                      checked={utilityApi === "marketing"}
+                      onChange={() => setApiModeOverride("marketing")}
+                    />
+                    Marketing (केवल टेक्स्ट)
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="bulk-api-mode"
+                      value="utility"
+                      checked={utilityApi === "utility"}
+                      onChange={() => setApiModeOverride("utility")}
+                    />
+                    Utility (टेक्स्ट + इमेज)
+                  </label>
+                </div>
+              </fieldset>
               <label htmlFor="whatsapp-bulk-image" className="block font-medium text-gray-800">
                 संदेश के साथ इमेज
               </label>
@@ -322,9 +501,10 @@ export default function WhatsAppBulk() {
                 </div>
               )}
               <p className="text-xs text-gray-600">
-                {utilityApi
+                {utilityApi === "utility"
                   ? "चुनी गई इमेज UTILITY API के साथ संदेश में भेजी जाएगी।"
                   : "MARKETING API केवल टेक्स्ट भेजेगी; इमेज संलग्न नहीं होगी।"}
+                {utilityApi === "utility" && /\/sendmsg\.php$/i.test(apiTemplate) && " API URL को इमेज-सक्षम Utility endpoint पर बदला जाएगा।"}
                 {" "}अधिकतम आकार 10 MB।
               </p>
             </div>
@@ -411,21 +591,15 @@ export default function WhatsAppBulk() {
             </div>
           )}
 
-          {/* Warning if text is not the template name */}
-          {previewUrls && previewUrls.length > 0 && !previewUrls[0].url.includes('text=team_neena_verma9') && (
-            <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4 mb-3">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="w-6 h-6 text-orange-600 mt-0.5 flex-shrink-0" />
-                <div className="text-sm">
-                  <p className="font-bold text-orange-900">⚠️ चेतावनी: text parameter गलत है!</p>
-                  <p className="text-orange-700 mt-2">
-                    URLs में <code className="bg-orange-100 px-1.5 py-0.5 rounded font-mono">text</code> parameter 'team_neena_verma9' नहीं है।
-                  </p>
-                  <p className="text-orange-700 mt-1">
-                    यह template name होना चाहिए, पूरा संदेश नहीं।
-                  </p>
-                </div>
-              </div>
+          {/* Show the exact template name that will be sent. */}
+          {previewUrls && previewUrls.length > 0 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-3">
+              <p className="text-sm text-orange-900">
+                Template: <strong className="font-mono">{new URL(previewUrls[0].url).searchParams.get("text") || "नहीं मिला"}</strong>
+              </p>
+              {previewUrls.some((item) => new URL(item.url).searchParams.get("text") !== new URL(previewUrls[0].url).searchParams.get("text")) && (
+                <p className="mt-1 text-xs text-red-700">चुने गए प्राप्तकर्ताओं के URL में अलग-अलग template हैं। भेजने से पहले जाँचें।</p>
+              )}
             </div>
           )}
 
@@ -470,7 +644,14 @@ export default function WhatsAppBulk() {
                 {item.utilityApi && item.imageUrl && (
                   <div className="flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-2">
                     <img src={item.imageUrl} alt="संदेश इमेज" className="h-12 w-12 rounded border object-cover" />
-                    <span className="truncate text-xs text-blue-800">{imageName} — UTILITY इमेज</span>
+                    <a
+                      href={item.imageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="truncate text-xs text-blue-800 underline"
+                    >
+                      {imageName} — इमेज URL खोलकर जाँचें
+                    </a>
                   </div>
                 )}
                 
@@ -489,12 +670,12 @@ export default function WhatsAppBulk() {
                       <code className="bg-yellow-100 px-1">phone</code> parameter
                     </li>
                     <li>
-                      {item.url.includes('text=team_neena_verma9') ? '✅' : '❌'} 
+                      {item.url.includes(`text=${encodeURIComponent(item.templateName)}`) ? '✅' : '❌'}
                       <code className="bg-yellow-100 px-1">text</code> is template name
                     </li>
                     <li>
-                      {item.url.includes('params=') ? '✅' : '❌'} 
-                      <code className="bg-yellow-100 px-1">params</code> parameter with dynamic values
+                      {/([?&])params=/i.test(item.url) ? '✅' : '❌'}
+                      <code className="bg-yellow-100 px-1">Params</code> parameter with dynamic values
                     </li>
                     <li>
                       {item.url.includes('template_id=') ? '❌ BREAKS API!' : '✅ Correct'} 
@@ -504,6 +685,9 @@ export default function WhatsAppBulk() {
                       {item.url.includes('sender=') ? '✅' : '❌'} 
                       <code className="bg-yellow-100 px-1">sender</code> parameter
                     </li>
+                    {item.utilityApi && (
+                      <li>{item.url.includes('htype=image') && item.url.includes('url=') ? '✅ Utility image URL included' : '❌ Utility image parameters missing'}</li>
+                    )}
                   </ul>
                 </div>
               </div>

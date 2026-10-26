@@ -412,7 +412,7 @@ export default function WhatsAppSettings() {
                         className="font-mono text-sm"
                       />
                       <p className="text-xs text-gray-500">
-                        BHASHSMS में बनाया गया TEXT template name
+                        BHASHSMS template name. Bulk में API URL का <code>text</code> parameter पहले इस्तेमाल होगा; यहाँ का नाम URL में <code>text</code> न होने पर fallback है।
                       </p>
                     </div>
 

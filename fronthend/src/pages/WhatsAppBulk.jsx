@@ -38,6 +38,17 @@ const setCanonicalQueryParameter = (searchParams, name, value) => {
   searchParams.set(name, value);
 };
 
+const getConfiguredTemplateName = (apiUrl, templateName) => {
+  try {
+    const urlTemplateName = new URL(apiUrl).searchParams.get("text")?.trim();
+    if (urlTemplateName && !urlTemplateName.includes("{{")) return urlTemplateName;
+  } catch {
+    return templateName.trim();
+  }
+
+  return templateName.trim();
+};
+
 const normalizeImageFilename = (filename, mimeType) => {
   const extensionByMimeType = {
     "image/jpeg": ".jpeg",
@@ -74,8 +85,10 @@ const buildBulkApiUrl = ({ template, person, message, templateName, mode, imageU
     url.pathname = url.pathname.replace(/sendmsg(?:util)?\.php$/i, mode === "utility" ? "sendmsgutil.php" : "sendmsg.php");
   }
 
-  const existingText = url.searchParams.get("text");
-  const selectedTemplate = templateName.trim() || (existingText && !existingText.includes("{{") ? existingText : "team_neena_verma9");
+  const selectedTemplate = getConfiguredTemplateName(template, templateName);
+  if (!selectedTemplate) {
+    throw new Error("WhatsApp Settings में TEXT API URL का text template name दर्ज करें।");
+  }
   setQueryParameter(url.searchParams, "phone", person.Mobile || "");
   setQueryParameter(url.searchParams, "text", selectedTemplate);
   setCanonicalQueryParameter(url.searchParams, "Params", `${person.Name || ""},${message}`);

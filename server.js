@@ -1324,8 +1324,9 @@ app.post('/api/functions/sendWhatsAppMessage', async (req, res) => {
         return '';
       }
     })();
-    const textTemplateName = configuredTemplateName
-      || (configuredUrlTemplate.includes('{{') ? '' : configuredUrlTemplate.trim());
+    const textTemplateName = configuredUrlTemplate && !configuredUrlTemplate.includes('{{')
+      ? configuredUrlTemplate.trim()
+      : configuredTemplateName;
 
     if (apiUrl && textTemplateName) {
       const requestUrl = new URL(apiUrl);
